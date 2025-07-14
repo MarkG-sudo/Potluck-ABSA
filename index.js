@@ -1,7 +1,14 @@
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
+import "./middlewares/passport.js";
 import userRouter from "./routes/users.js";
+import mealRouter from "./routes/meals.js";
+import reviewMealRouter from "./routes/mealReview.js";
+import orderRouter from "./routes/mealOrder.js";
+import adminRouter from "./routes/adminApproval.js";
+import gAuthRouter from "./routes/auth.js";
+
 
 // Initialize Express app
 const app = express();
@@ -25,8 +32,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
 
+
+
 // Register routes
-app.use('/users', userRouter);
+app.use(userRouter);
+app.use(mealRouter);
+app.use(reviewMealRouter);
+app.use(orderRouter);
+app.use(adminRouter);
+app.use(gAuthRouter);
+
 
 
 // Start server

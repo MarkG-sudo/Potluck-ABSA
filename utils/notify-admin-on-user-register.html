@@ -4,13 +4,13 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Welcome to Potluck</title>
+    <title>New Account Pending Approval</title>
     <style>
         body {
             font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
             margin: 0;
             padding: 0;
-            background-color: #f9f9f9;
             color: #333;
         }
 
@@ -31,14 +31,8 @@
         }
 
         .email-header h1 {
-            color: #00A63E;
-            font-size: 22px;
-            margin: 0;
-        }
-
-        .email-header img {
-            width: 120px;
-            margin-top: 10px;
+            color: #111827;
+            font-size: 20px;
         }
 
         .email-content {
@@ -54,6 +48,15 @@
             color: #666;
         }
 
+        .highlight {
+            background-color: #fef3c7;
+            padding: 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            margin-top: 10px;
+            color: #92400e;
+        }
+
         a {
             color: #0073e6;
             text-decoration: none;
@@ -64,19 +67,21 @@
 <body>
     <div class="email-container">
         <div class="email-header">
-            <h1>Welcome to Potluck, {{firstName}}!</h1>
-            <!-- Optional: Uncomment and update image src if using logo -->
-            <!-- <img src="https://your-cloudinary-link/logo.png" alt="Potluck Logo" /> -->
+            <h1>New User Awaiting Approval</h1>
         </div>
         <div class="email-content">
-            <p>We’re thrilled to have you join our community of food lovers!</p>
-            <p>Your Potluck account has been successfully created. You can now log in and start exploring delicious
-                home-cooked meals nearby.</p>
-            <p>🍽️ <strong>Delicious Meals For Us By Us!</strong></p>
-            <p>If you have any questions, feel free to <a href="mailto:hello@potluck.africa">reach out to us</a>.</p>
+            <p>Hello Admin,</p>
+            <p>A new <strong>{{role}}</strong> has just registered on the Potluck platform and is awaiting your
+                approval.</p>
 
-            <p>Welcome again,</p>
-            <p>The Potluck Team</p>
+            <div class="highlight">
+                {{firstName}} {{lastName}} <br />
+                Email: {{email}} <br />
+                Phone: {{phone}}
+            </div>
+
+            <p>Please log in to your admin dashboard to review and approve the account.</p>
+            <p>Regards,<br />Potluck System</p>
         </div>
         <div class="email-footer">
             &copy; 2025 Potluck. All rights reserved.

@@ -6,16 +6,16 @@ import { upload } from "../middlewares/cloudinary.js";
 const userRouter = express.Router();
 
 // Public
-userRouter.post("/register", upload.single("avatar"), registerUser);
+userRouter.post("/users/register", upload.single("avatar"), registerUser);
 
-userRouter.post('/signIn', signInUser);
+userRouter.post("/users/signIn", signInUser);
 
 // Protected
-userRouter.get("/me", isAuthenticated, hasPermission('get_profile'), getMyProfile);
-userRouter.patch("/avatar", isAuthenticated, hasPermission('update_profile'), updateAvatar);
+userRouter.get("/users/me", isAuthenticated, hasPermission('get_profile'), getMyProfile);
+userRouter.patch("/users/avatar", isAuthenticated, hasPermission('update_profile'), updateAvatar);
 
 // Admin-only (expand with role middleware later)
-userRouter.get("/", getAllUsers);
-userRouter.delete("/:id",  deleteUser);
+userRouter.get("/admin/users", getAllUsers);
+userRouter.delete("/admin/:id",  deleteUser);
 
 export default userRouter;

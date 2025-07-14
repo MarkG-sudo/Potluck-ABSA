@@ -1,5 +1,5 @@
 import { UserModel } from "../models/users.js";
-import { loginUserValidator } from "../validators/users.js";
+import { registerUserValidator,loginUserValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { mailtransporter } from "../utils/mail.js";
@@ -10,15 +10,29 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "hello@potluck.africa";
+
 export const registerUser = async (req, res) => {
     try {
-        const { firstName, lastName, email, phone, password, role } = req.body;
+        // ✅ Validate input
+        const { error, value } = registerUserValidator.validate(req.body);
+        if (error) {
+            return res.status(422).json({ error: error.details.map(d => d.message) });
+        }
+
+        const { firstName, lastName, email, phone, password, role } = value;
 
         const userExists = await UserModel.findOne({ email });
-        if (userExists)
+        if (userExists) {
             return res.status(400).json({ message: "Email already in use" });
+        }
 
         const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Determine if role is potlucky (self-approved) or needs manual approval
+        const isPotlucky = role === "potlucky";
+        const isApproved = isPotlucky;
+        const profileCompleted = isPotlucky;
 
         const user = await UserModel.create({
             firstName,
@@ -27,34 +41,62 @@ export const registerUser = async (req, res) => {
             phone,
             password: hashedPassword,
             role,
+            isApproved,
+            profileCompleted,
         });
 
-        // 📧 Read the welcome email template file
-        const filePath = path.join(__dirname, "../utils/signup-mail.html");
-        let html = fs.readFileSync(filePath, "utf-8");
+        // Select email template path
+        const userTemplatePath = path.join(
+            __dirname,
+            `../utils/${isPotlucky ? "signup-mail.html" : "pending-approval-mail.html"}`
+        );
 
-        // Replace dynamic placeholders (if any)
-        html = html.replace(/{{firstName}}/g, firstName);
+        let userEmailHTML = fs.readFileSync(userTemplatePath, "utf-8");
+        userEmailHTML = userEmailHTML.replace(/{{firstName}}/g, firstName);
 
-        // Send email
+        // Send email to user
         await mailtransporter.sendMail({
             from: '"Potluck" <no-reply@potluck.app>',
             to: email,
-            subject: "Welcome to Potluck 🎉",
-            html,
+            subject: isPotlucky
+                ? "Welcome to Potluck 🎉"
+                : "Potluck Registration Received - Pending Approval",
+            html: userEmailHTML,
         });
+
+        // Notify Admin if role requires manual approval
+        if (!isPotlucky) {
+            const adminTemplatePath = path.join(
+                __dirname,
+                "../utils/notify-admin-on-user-register.html"
+            );
+            let adminEmailHTML = fs.readFileSync(adminTemplatePath, "utf-8");
+
+            adminEmailHTML = adminEmailHTML
+                .replace(/{{firstName}}/g, firstName)
+                .replace(/{{lastName}}/g, lastName)
+                .replace(/{{email}}/g, email)
+                .replace(/{{phone}}/g, phone || "Not Provided")
+                .replace(/{{role}}/g, role);
+
+            await mailtransporter.sendMail({
+                from: '"Potluck Notifications" <no-reply@potluck.app>',
+                to: process.env.ADMIN_EMAIL, // ✅ Use env variable
+                subject: `New ${role} account pending approval`,
+                html: adminEmailHTML,
+            });
+        }
 
         res.status(201).json({ message: "User registered successfully", user });
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
     }
-  };
-
+};
 export const signInUser = async (req, res, next) => {
     try {
         const { error, value } = loginUserValidator.validate(req.body);
         if (error) {
-            return res.status(422).json({ error: error.details });
+            return res.status(422).json({ error: error.details.map(d => d.message) });
         }
 
         const user = await UserModel.findOne({ email: value.email });
@@ -67,12 +109,13 @@ export const signInUser = async (req, res, next) => {
             return res.status(401).json({ error: "Invalid credentials!" });
         }
 
-        // ✅ Block unapproved users
-        // if (!user.isApproved) {
-        //     return res.status(403).json({
-        //         error: "Your account has not been approved yet. Please wait for admin review."
-        //     });
-        // }
+        // ✅ Block unapproved potchef or operator accounts
+        const rolesRequiringApproval = ["potchef", "franchisee"];
+        if (rolesRequiringApproval.includes(user.role) && !user.isApproved) {
+            return res.status(403).json({
+                error: "Your account is pending approval. Please wait for admin verification."
+            });
+        }
 
         // ✅ Generate JWT token
         const token = jwt.sign(
@@ -93,7 +136,8 @@ export const signInUser = async (req, res, next) => {
     } catch (error) {
         next(error);
     }
-  };
+};
+
   
 
 export const getAllUsers = async (req, res) => {

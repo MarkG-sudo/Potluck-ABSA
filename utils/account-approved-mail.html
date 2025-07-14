@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Account Approved</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 30px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .header {
+            background-color: #00A63E;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .content h2 {
+            margin-top: 0;
+            color: #00A63E;
+        }
+
+        .footer {
+            background-color: #f1f1f1;
+            color: #666;
+            font-size: 0.85em;
+            text-align: center;
+            padding: 15px;
+        }
+
+        a.button {
+            display: inline-block;
+            background-color: #00A63E;
+            color: white;
+            padding: 10px 20px;
+            margin-top: 20px;
+            border-radius: 4px;
+            text-decoration: none;
+        }
+
+        a.button:hover {
+            background-color: #007d2f;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Potluck Account Approved 🎉</h1>
+        </div>
+        <div class="content">
+            <h2>Hi {{firstName}},</h2>
+            <p>Great news! Your Potluck account has been approved by our team. You can now log in and start enjoying the
+                features of your dashboard.</p>
+
+            <p>Click the button below to access your account:</p>
+            <a href="https://potluck-africa.netlify.app/login" class="button">Go to Dashboard</a>
+
+            <p>If you need any help, just reply to this email or reach out to us at <a
+                    href="mailto:hello@potluck.africa">hello@potluck.africa</a>.</p>
+
+            <p>Welcome aboard!<br>The Potluck Team</p>
+        </div>
+        <div class="footer">
+            &copy; 2025 Potluck. All rights reserved.
+        </div>
+    </div>
+</body>
+
+</html>

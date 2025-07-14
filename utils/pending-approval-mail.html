@@ -4,14 +4,14 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Welcome to Potluck</title>
+    <title>Account Pending Approval</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
             background-color: #f9f9f9;
             color: #333;
+            margin: 0;
+            padding: 0;
         }
 
         .email-container {
@@ -31,14 +31,9 @@
         }
 
         .email-header h1 {
-            color: #00A63E;
+            color: #D97706;
             font-size: 22px;
             margin: 0;
-        }
-
-        .email-header img {
-            width: 120px;
-            margin-top: 10px;
         }
 
         .email-content {
@@ -64,19 +59,17 @@
 <body>
     <div class="email-container">
         <div class="email-header">
-            <h1>Welcome to Potluck, {{firstName}}!</h1>
-            <!-- Optional: Uncomment and update image src if using logo -->
-            <!-- <img src="https://your-cloudinary-link/logo.png" alt="Potluck Logo" /> -->
+            <h1>Hello {{firstName}}, your account is pending approval</h1>
         </div>
         <div class="email-content">
-            <p>We’re thrilled to have you join our community of food lovers!</p>
-            <p>Your Potluck account has been successfully created. You can now log in and start exploring delicious
-                home-cooked meals nearby.</p>
-            <p>🍽️ <strong>Delicious Meals For Us By Us!</strong></p>
-            <p>If you have any questions, feel free to <a href="mailto:hello@potluck.africa">reach out to us</a>.</p>
-
-            <p>Welcome again,</p>
-            <p>The Potluck Team</p>
+            <p>Thank you for registering on Potluck!</p>
+            <p>Your account is currently under review by our team. We’ll notify you via email once it’s approved and
+                ready for use.</p>
+            <p>Please be patient while we verify your information. This ensures a safe and trustworthy experience for
+                everyone on the platform.</p>
+            <p>If you have any questions or need support, feel free to <a href="mailto:support@potluck.africa">contact
+                    us</a>.</p>
+            <p>Best regards,<br>The Potluck Team</p>
         </div>
         <div class="email-footer">
             &copy; 2025 Potluck. All rights reserved.
