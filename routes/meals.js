@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-    createMeal, getAllMeals, getMyMeals, updateMeal, deleteMeal, updateMealStatusByChef, moderateMealStatusByAdmin } from "../controllers/meals.js";
+    createMeal, getAllMeals, getMyMeals, updateMeal, deleteMeal, getMealById, updateMealStatusByChef, moderateMealStatusByAdmin, getMyMealById } from "../controllers/meals.js";
 import { mealImageUpload } from "../middlewares/cloudinary.js"; 
 import { isAuthenticated, hasPermission } from "../middlewares/auth.js";
 
@@ -22,6 +22,8 @@ mealRouter.get("/meals", isAuthenticated, hasPermission("view_all_meals"), getAl
 // Get only the logged-in chef’s meals
 mealRouter.get("/meals/mine", isAuthenticated, hasPermission("view_my_meals"), getMyMeals);
 
+mealRouter.get("/meals/mine/:id", isAuthenticated, getMyMealById);
+
 // Update meal
 mealRouter.patch(
     "/meals/:id",
@@ -38,6 +40,9 @@ mealRouter.delete(
     hasPermission("delete_meal"),
     deleteMeal
 );
+// view one meal by all
+mealRouter.get("/meals/:id", isAuthenticated, getMealById);
+
 
 
 

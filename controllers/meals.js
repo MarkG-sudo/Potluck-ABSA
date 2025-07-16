@@ -113,7 +113,29 @@ export const getMyMeals = async (req, res, next) => {
         next(error);
     }
 };
+// Get one of meals by Potchef (authenticated)
+export const getMyMealById = async (req, res, next) => {
+    try {
+        const { id } = req.params;
 
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: "Invalid meal ID" });
+        }
+
+        const meal = await Meal.findOne({
+            _id: id,
+            createdBy: req.auth.id
+        });
+
+        if (!meal) {
+            return res.status(404).json({ error: "Meal not found or access denied" });
+        }
+
+        res.json(meal);
+    } catch (err) {
+        next(err);
+    }
+};
 // Update meal by ID
 export const updateMeal = async (req, res, next) => {
     try {
@@ -233,5 +255,25 @@ export const moderateMealStatusByAdmin = async (req, res, next) => {
         });
     } catch (error) {
         next(error);
+    }
+};
+
+export const getMealById = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: "Invalid meal ID" });
+        }
+
+        const meal = await Meal.findById(id).populate("createdBy", "firstName lastName avatar");
+
+        if (!meal) {
+            return res.status(404).json({ error: "Meal not found" });
+        }
+
+        res.json(meal);
+    } catch (err) {
+        next(err);
     }
 };
