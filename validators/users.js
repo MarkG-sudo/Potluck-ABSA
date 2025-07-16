@@ -38,3 +38,11 @@ export const loginUserValidator = Joi.object({
     email: Joi.string().trim().email().required(),
     password: Joi.string().min(8).required()
 });
+
+export const updateUserValidator = Joi.object({
+    firstName: Joi.string().min(2).max(50),
+    lastName: Joi.string().min(2).max(50),
+    phone: Joi.string().pattern(/^0\d{9}$/).message("Phone must start with 0 and be 10 digits"),
+    avatar: Joi.string().uri(),
+    password: Joi.string().min(8)
+});

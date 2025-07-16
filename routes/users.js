@@ -1,5 +1,5 @@
 import express from "express";
-import { registerUser, getAllUsers, signInUser, getMyProfile, updateAvatar, deleteUser } from "../controllers/users.js";
+import { registerUser, getAllUsers, signInUser, getMyProfile, updateAvatar, updateUser, deleteUser } from "../controllers/users.js";
 import { hasPermission, isAuthenticated } from '../middlewares/auth.js';
 import { upload } from "../middlewares/cloudinary.js";
 
@@ -9,6 +9,8 @@ const userRouter = express.Router();
 userRouter.post("/users/register", upload.single("avatar"), registerUser);
 
 userRouter.post("/users/signIn", signInUser);
+
+userRouter.patch("/users/me", isAuthenticated, updateUser);
 
 // Protected
 userRouter.get("/users/me", isAuthenticated, hasPermission('get_profile'), getMyProfile);

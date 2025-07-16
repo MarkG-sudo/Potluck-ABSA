@@ -1,5 +1,5 @@
 import { UserModel } from "../models/users.js";
-import { registerUserValidator,loginUserValidator } from "../validators/users.js";
+import { registerUserValidator, loginUserValidator, updateUserValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { mailtransporter } from "../utils/mail.js";
@@ -175,5 +175,38 @@ export const deleteUser = async (req, res) => {
         res.status(200).json({ message: "User deleted" });
     } catch (err) {
         res.status(500).json({ message: err.message });
+    }
+};
+
+export const updateUser = async (req, res, next) => {
+    try {
+        const { error, value } = updateUserValidator.validate(req.body);
+        if (error) {
+            return res.status(422).json({ error: error.details.map(d => d.message) });
+        }
+
+        const user = await UserModel.findById(req.auth.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // If password is being updated, hash it
+        if (value.password) {
+            value.password = await bcrypt.hash(value.password, 10);
+        }
+
+        //  Update allowed fields only
+        const fieldsToUpdate = ["firstName", "lastName", "phone", "avatar", "password"];
+        for (const field of fieldsToUpdate) {
+            if (value[field] !== undefined) {
+                user[field] = value[field];
+            }
+        }
+
+        await user.save();
+
+        res.status(200).json({ message: "Profile updated successfully", user: { ...user.toObject(), password: undefined } });
+    } catch (err) {
+        next(err);
     }
 };
