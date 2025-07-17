@@ -32,7 +32,7 @@ export const createMeal = async (req, res, next) => {
     }
 };
 
-// Get all meals (Admin/General view)
+// Get all meals 
 export const getAllMeals = async (req, res, next) => {
     try {
         const { error, value } = mealQueryValidator.validate(req.query);
@@ -104,17 +104,9 @@ export const getAllMeals = async (req, res, next) => {
         next(error);
     }
 };
-// Get meals by Potchef (authenticated)
-export const getMyMeals = async (req, res, next) => {
-    try {
-        const meals = await Meal.find({ createdBy: req.auth.id });
-        res.json(meals);
-    } catch (error) {
-        next(error);
-    }
-};
-// Get one of meals by Potchef (authenticated)
-export const getMyMealById = async (req, res, next) => {
+
+// View one meal 
+export const getMealById = async (req, res, next) => {
     try {
         const { id } = req.params;
 
@@ -122,13 +114,10 @@ export const getMyMealById = async (req, res, next) => {
             return res.status(400).json({ error: "Invalid meal ID" });
         }
 
-        const meal = await Meal.findOne({
-            _id: id,
-            createdBy: req.auth.id
-        });
+        const meal = await Meal.findById(id).populate("createdBy", "firstName lastName avatar");
 
         if (!meal) {
-            return res.status(404).json({ error: "Meal not found or access denied" });
+            return res.status(404).json({ error: "Meal not found" });
         }
 
         res.json(meal);
@@ -136,6 +125,7 @@ export const getMyMealById = async (req, res, next) => {
         next(err);
     }
 };
+
 // Update meal by ID
 export const updateMeal = async (req, res, next) => {
     try {
@@ -201,6 +191,38 @@ export const deleteMeal = async (req, res, next) => {
     }
 };
 
+// Get meals by Potchef (authenticated)
+export const getMyMeals = async (req, res, next) => {
+    try {
+        const meals = await Meal.find({ createdBy: req.auth.id });
+        res.json(meals);
+    } catch (error) {
+        next(error);
+    }
+};
+// Get one of meals by Potchef (authenticated)
+export const getMyMealById = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: "Invalid meal ID" });
+        }
+
+        const meal = await Meal.findOne({
+            _id: id,
+            createdBy: req.auth.id
+        });
+
+        if (!meal) {
+            return res.status(404).json({ error: "Meal not found or access denied" });
+        }
+
+        res.json(meal);
+    } catch (err) {
+        next(err);
+    }
+};
 export const updateMealStatusByChef = async (req, res, next) => {
     try {
         const { id } = req.params;
@@ -229,7 +251,7 @@ export const updateMealStatusByChef = async (req, res, next) => {
     }
 };
 
-
+// admin
 export const moderateMealStatusByAdmin = async (req, res, next) => {
     try {
         const { id } = req.params;
@@ -258,22 +280,3 @@ export const moderateMealStatusByAdmin = async (req, res, next) => {
     }
 };
 
-export const getMealById = async (req, res, next) => {
-    try {
-        const { id } = req.params;
-
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({ error: "Invalid meal ID" });
-        }
-
-        const meal = await Meal.findById(id).populate("createdBy", "firstName lastName avatar");
-
-        if (!meal) {
-            return res.status(404).json({ error: "Meal not found" });
-        }
-
-        res.json(meal);
-    } catch (err) {
-        next(err);
-    }
-};

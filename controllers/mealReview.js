@@ -41,42 +41,6 @@ export const getMealReviews = async (req, res, next) => {
     }
 };
 
-
-// Toggle favorite
-export const toggleFavoriteMeal = async (req, res, next) => {
-    try {
-        const { mealId } = req.params;
-        const user = await UserModel.findById(req.auth.id);
-
-        const alreadyFavorited = user.favorites.includes(mealId);
-
-        if (alreadyFavorited) {
-            user.favorites.pull(mealId);
-        } else {
-            user.favorites.push(mealId);
-        }
-
-        await user.save();
-
-        res.json({
-            message: alreadyFavorited ? "Removed from favorites" : "Added to favorites",
-            favorites: user.favorites
-        });
-    } catch (err) {
-        next(err);
-    }
-};
-
-// Get all favorites
-export const getMyFavorites = async (req, res, next) => {
-    try {
-        const user = await UserModel.findById(req.auth.id).populate("favorites");
-        res.json(user.favorites);
-    } catch (err) {
-        next(err);
-    }
-};
-
 export const updateMealReview = async (req, res, next) => {
     const { mealId } = req.params;
     const { error, value } = mealReviewValidator.validate(req.body);
@@ -129,3 +93,40 @@ export const deleteMealReview = async (req, res, next) => {
         next(err);
     }
 };
+
+
+// Toggle favorite
+export const toggleFavoriteMeal = async (req, res, next) => {
+    try {
+        const { mealId } = req.params;
+        const user = await UserModel.findById(req.auth.id);
+
+        const alreadyFavorited = user.favorites.includes(mealId);
+
+        if (alreadyFavorited) {
+            user.favorites.pull(mealId);
+        } else {
+            user.favorites.push(mealId);
+        }
+
+        await user.save();
+
+        res.json({
+            message: alreadyFavorited ? "Removed from favorites" : "Added to favorites",
+            favorites: user.favorites
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+// Get all favorites
+export const getMyFavorites = async (req, res, next) => {
+    try {
+        const user = await UserModel.findById(req.auth.id).populate("favorites");
+        res.json(user.favorites);
+    } catch (err) {
+        next(err);
+    }
+};
+

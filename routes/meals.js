@@ -22,7 +22,7 @@ mealRouter.get("/meals", isAuthenticated, hasPermission("view_all_meals"), getAl
 // Get only the logged-in chef’s meals
 mealRouter.get("/meals/mine", isAuthenticated, hasPermission("view_my_meals"), getMyMeals);
 
-mealRouter.get("/meals/mine/:id", isAuthenticated, getMyMealById);
+mealRouter.get("/meals/mine/:id", isAuthenticated, hasPermission("view_my_meals"), getMyMealById);
 
 // Update meal
 mealRouter.patch(
@@ -40,6 +40,7 @@ mealRouter.delete(
     hasPermission("delete_meal"),
     deleteMeal
 );
+
 // view one meal by all
 mealRouter.get("/meals/:id", isAuthenticated, getMealById);
 

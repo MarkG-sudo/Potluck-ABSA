@@ -21,7 +21,7 @@ export const createOrderValidator = Joi.object({
 
 export const orderQueryValidator = Joi.object({
     status: Joi.string()
-        .valid("Pending", "Accepted", "Rejected", "Cancelled", "Delivered")
+        .valid("Pending", "Preparing", "Ready", "Delivering", "Delivered", "Cancelled")
         .optional(),
 
     from: Joi.date().iso().optional(),
@@ -29,6 +29,6 @@ export const orderQueryValidator = Joi.object({
 
     page: Joi.number().integer().min(1).default(1),
     limit: Joi.number().integer().min(1).max(100).default(10),
-    sortBy: Joi.string().valid("createdAt", "pickupTime", "status").default("createdAt"),
+    sortBy: Joi.string().valid("createdAt", "pickupTime", "deliveredAt", "cancelledAt", "paidAt", "status").default("createdAt"),
     sortOrder: Joi.string().valid("asc", "desc").default("desc")
 });

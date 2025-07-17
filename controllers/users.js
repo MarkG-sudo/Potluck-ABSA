@@ -138,12 +138,74 @@ export const signInUser = async (req, res, next) => {
     }
 };
 
-  
+export const getOneUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const user = await UserModel.findById(id).select("-password").lean();
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        res.status(200).json(user);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
 
 export const getAllUsers = async (req, res) => {
     try {
-        const users = await UserModel.find().select("-password");
-        res.status(200).json(users);
+        const {
+            role,
+            profileCompleted,
+            isApproved,
+            sortBy = "createdAt",
+            sortOrder = "desc",
+            page = 1,
+            limit = 20
+        } = req.query;
+
+        const filter = {};
+        if (role) filter.role = role;
+        if (profileCompleted !== undefined)
+            filter.profileCompleted = profileCompleted === "true";
+        if (isApproved !== undefined)
+            filter.isApproved = isApproved === "true";
+
+        const sort = {
+            [sortBy]: sortOrder === "asc" ? 1 : -1
+        };
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        const users = await UserModel.find(filter)
+            .select("-password")
+            .sort(sort)
+            .skip(skip)
+            .limit(parseInt(limit))
+            .lean();
+
+        const totalUsers = await UserModel.countDocuments(filter);
+
+        const roleCounts = await UserModel.aggregate([
+            { $group: { _id: "$role", count: { $sum: 1 } } }
+        ]);
+
+        const roleSummary = {};
+        roleCounts.forEach(r => {
+            roleSummary[r._id] = r.count;
+        });
+
+        res.status(200).json({
+            page: Number(page),
+            limit: Number(limit),
+            totalUsers,
+            totalPages: Math.ceil(totalUsers / limit),
+            users,
+            roleCounts: roleSummary
+        });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
@@ -161,13 +223,24 @@ export const getMyProfile = async (req, res) => {
 
 export const updateAvatar = async (req, res) => {
     try {
-        const { url } = req.body;
-        const user = await UserModel.findByIdAndUpdate(req.user.id, { avatar: url }, { new: true });
+        if (!req.file || !req.file.path) {
+            return res.status(400).json({ message: "No avatar uploaded" });
+        }
+
+        const avatarUrl = req.file.path;
+
+        const user = await UserModel.findByIdAndUpdate(
+            req.auth.id,
+            { avatar: avatarUrl },
+            { new: true }
+        );  
+
         res.status(200).json({ message: "Avatar updated", user });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 };
+
 
 export const deleteUser = async (req, res) => {
     try {
@@ -190,13 +263,18 @@ export const updateUser = async (req, res, next) => {
             return res.status(404).json({ message: "User not found" });
         }
 
-        // If password is being updated, hash it
+        // ✅ If password is being updated, hash it
         if (value.password) {
             value.password = await bcrypt.hash(value.password, 10);
         }
 
-        //  Update allowed fields only
-        const fieldsToUpdate = ["firstName", "lastName", "phone", "avatar", "password"];
+        // ✅ Update avatar if file was uploaded
+        if (req.file && req.file.path) {
+            user.avatar = req.file.path;
+        }
+
+        // ✅ Update allowed text fields
+        const fieldsToUpdate = ["firstName", "lastName", "phone", "password"];
         for (const field of fieldsToUpdate) {
             if (value[field] !== undefined) {
                 user[field] = value[field];
@@ -205,7 +283,10 @@ export const updateUser = async (req, res, next) => {
 
         await user.save();
 
-        res.status(200).json({ message: "Profile updated successfully", user: { ...user.toObject(), password: undefined } });
+        res.status(200).json({
+            message: "Profile updated successfully",
+            user: { ...user.toObject(), password: undefined }
+        });
     } catch (err) {
         next(err);
     }

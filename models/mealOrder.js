@@ -30,7 +30,7 @@ const mealOrderSchema = new Schema(
         },
         status: {
             type: String,
-            enum: ["Pending", "Accepted", "Rejected", "Cancelled", "Delivered"],
+            enum: ["Pending", "Preparing", "Ready", "Delivering", "Delivered", "Cancelled"],
             default: "Pending"
         },
         pickupTime: {
@@ -42,9 +42,11 @@ const mealOrderSchema = new Schema(
             trim: true
         },        
         acceptedAt: { type: Date, default: null },
-        rejectedAt: { type: Date, default: null },
+        readyAt: { type: Date, default: null },        
+        deliveringAt: { type: Date, default: null },
         deliveredAt: { type: Date, default: null },
         cancelledAt: { type: Date, default: null },
+        paidAt: { type: Date, default: null },
         updatedBy: { type: Schema.Types.ObjectId, ref: "User" }
 
     },

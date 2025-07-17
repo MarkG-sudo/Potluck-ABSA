@@ -2,6 +2,8 @@ import { Meal } from "../models/meals.js";
 import { MealOrder } from "../models/mealOrder.js";
 import { createOrderValidator, orderQueryValidator } from "../validators/mealOrder.js";
 
+
+// POtlucky
 export const placeOrder = async (req, res, next) => {
     try {
         // ✅ Validate request body
@@ -150,7 +152,7 @@ export const updateOrderStatus = async (req, res, next) => {
         const { orderId } = req.params;
         const { status } = req.body;
 
-        const allowed = ["Accepted", "Rejected", "Delivered"];
+        const allowed = ["Preparing", "Ready", "Delivering", "Delivered", "Cancelled"];
         if (!allowed.includes(status)) {
             return res.status(400).json({ error: "Invalid status update" });
         }
@@ -167,9 +169,11 @@ export const updateOrderStatus = async (req, res, next) => {
         order.status = status;
 
         // ⏱ Optional timestamps
-        if (status === "Accepted") order.acceptedAt = new Date();
-        if (status === "Rejected") order.rejectedAt = new Date();
+        if (status === "Preparing") order.acceptedAt = new Date();
+        if (status === "Ready") order.readyAt = new Date();
+        if (status === "Delivering") order.deliveringAt = new Date();
         if (status === "Delivered") order.deliveredAt = new Date();
+        if (status === "Cancelled") order.cancelledAt = new Date();
 
         order.updatedBy = req.auth.id;
 
