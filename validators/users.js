@@ -11,7 +11,7 @@ export const registerUserValidator = Joi.object({
         .required()
         .messages({ 'string.email': 'Email must be a valid address' }),
 
-    phone: Joi.string().pattern(/^0\d{9}$/).required().label("Phone").messages({
+    phone: Joi.string().pattern(/^0\d{9}$/).label("Phone").messages({
         "string.pattern.base": "Phone number must be a valid 10-digit Ghana number (e.g. 0559090182)"
     }),
 
