@@ -32,9 +32,7 @@ connectDB();
 // Middleware setup
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({
-    origin: process.env.FRONTEND_URL // No credentials needed for JWT
-}));
+app.use(cors());
 app.set('trust proxy', 1); // Still required for Render.com
 
 // Initialize Passport WITHOUT sessions
