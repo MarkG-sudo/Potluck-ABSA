@@ -14,7 +14,6 @@ const userSchema = new Schema({
     },
     phone: {
         type: String,
-        required: true,
         validate: {
             validator: function (v) {
                 return /^0\d{9}$/.test(v); // must start with 0 and have exactly 10 digits
