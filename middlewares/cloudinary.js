@@ -40,9 +40,26 @@ const mealImageStorage = new CloudinaryStorage({
     }
 });
 
+// 📍 Franchisee image storage
+const franchiseeImageStorage = new CloudinaryStorage({
+    cloudinary,
+    params: {
+        folder: "Potluck-Franchisees",
+        allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'tiff', 'svg', 'avif'],
+        public_id: (req, file) => {
+            const timestamp = Date.now();
+            const ext = file.originalname.split('.').pop();
+            return `franchisee-${timestamp}.${ext}`;
+        }
+    }
+});
+
+
 // Multer upload middlewares
 export const upload = multer({ storage: profileStorage });
 export const mealImageUpload = multer({ storage: mealImageStorage });
+export const franchiseeImageUpload = multer({ storage: franchiseeImageStorage });
+
 
 // Export cloudinary instance
 export default cloudinary;

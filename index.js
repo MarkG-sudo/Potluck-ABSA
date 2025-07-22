@@ -8,8 +8,10 @@ import mealRouter from "./routes/meals.js";
 import reviewMealRouter from "./routes/mealReview.js";
 import orderRouter from "./routes/mealOrder.js";
 import adminRouter from "./routes/adminApproval.js";
+import franchiseeRouter from "./routes/franchisee.js";
 import gAuthRouter from "./routes/auth.js";
 import dotenv from "dotenv";
+
 
 // Load environment variables
 dotenv.config();
@@ -45,6 +47,7 @@ app.use(reviewMealRouter);
 app.use(orderRouter);
 app.use(adminRouter);
 app.use(gAuthRouter);
+app.use(franchiseeRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

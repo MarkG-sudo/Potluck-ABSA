@@ -89,6 +89,7 @@ export const permissions = [
             'send_announcement',
             'view_user_list',
             'access_user_metrics',
+            'add_franchisee',
             'view_compliance_dashboard'
         ]
     },
