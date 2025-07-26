@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 // Create a new Meal
 export const createMeal = async (req, res, next) => {
     try {
+        // 🟡 First, validate other text fields (not photos)
         const { error, value } = addMealValidator.validate(req.body);
         if (error) {
             return res.status(422).json({
@@ -12,11 +13,16 @@ export const createMeal = async (req, res, next) => {
             });
         }
 
-        const photoUrls = req.files?.photos?.map(file => file.path) || [];
+        // 🟡 Now handle file validation separately
+        const photoUrls = req.files?.map(file => file.path) || [];
+        if (photoUrls.length === 0) {
+            return res.status(400).json({ error: "At least one meal photo is required." });
+        }
         if (photoUrls.length > 5) {
-            return res.status(400).json({ error: "Maximum of 5 photos allowed" });
+            return res.status(400).json({ error: "Maximum of 5 photos allowed." });
         }
 
+        // 🟢 Create the meal
         const meal = await Meal.create({
             ...value,
             photos: photoUrls,
@@ -31,6 +37,7 @@ export const createMeal = async (req, res, next) => {
         next(error);
     }
 };
+
 
 // Get all meals 
 export const getAllMeals = async (req, res, next) => {
@@ -127,16 +134,25 @@ export const getMealById = async (req, res, next) => {
 };
 
 // Update meal by ID
+
 export const updateMeal = async (req, res, next) => {
     try {
         const mealId = req.params.id;
+
         if (!mongoose.Types.ObjectId.isValid(mealId)) {
             return res.status(400).json({ error: "Invalid meal ID" });
         }
 
+        // ✅ Prepare update data from body
         const updateData = req.body;
 
-        // Validate request body using Joi
+        // ✅ If new photos were uploaded, attach them
+        const photoUrls = req.files?.map(file => file.path) || [];
+        if (photoUrls.length > 0) {
+            updateData.photos = photoUrls;
+        }
+
+        // ✅ Validate final updateData
         const { error, value } = updateMealValidator.validate(updateData);
         if (error) {
             return res.status(422).json({
@@ -144,11 +160,7 @@ export const updateMeal = async (req, res, next) => {
             });
         }
 
-        // Attach Cloudinary photo URLs if new photos were uploaded
-        if (req.files?.photos?.length > 0) {
-            value.photos = req.files.photos.map(file => file.path);
-        }
-
+        // ✅ Update meal only if user owns it
         const updatedMeal = await Meal.findOneAndUpdate(
             { _id: mealId, createdBy: req.auth.id },
             value,
@@ -167,6 +179,7 @@ export const updateMeal = async (req, res, next) => {
         next(error);
     }
 };
+
 
 // Delete meal by ID
 export const deleteMeal = async (req, res, next) => {
@@ -195,11 +208,16 @@ export const deleteMeal = async (req, res, next) => {
 export const getMyMeals = async (req, res, next) => {
     try {
         const meals = await Meal.find({ createdBy: req.auth.id });
-        res.json(meals);
+
+        res.status(200).json({
+            count: meals.length,
+            meals
+        });
     } catch (error) {
         next(error);
     }
 };
+
 // Get one of meals by Potchef (authenticated)
 export const getMyMealById = async (req, res, next) => {
     try {
