@@ -21,7 +21,13 @@ const userSchema = new Schema({
             message: props => `${props.value} is not a valid Ghanaian phone number!`
         }
     },
-    password: { type: String, required: true, minlength: 8 },
+    password: {
+        type: String,
+        minlength: 8,
+        required: function () {
+            return this.source === "local";
+        }
+    },
     avatar: { type: String, default: "" },
     role: {
         type: String,

@@ -2,7 +2,8 @@ import { Router } from "express";
 import {
     createFranchisee,
     getAllFranchisees,
-    updateFranchisee,
+    updateFranchiseeImages,
+    updateFranchiseeText,
     removeFranchiseeImages,
     getFranchiseeById
 } from "../controllers/franchisee.js";
@@ -23,7 +24,25 @@ franchiseeRouter.get("/franchisees/:id", getFranchiseeById);
 
 // Admin
 
-franchiseeRouter.post("/franchisees/:id", isAuthenticated, hasPermission('add_franchisee'), isAdmin, franchiseeImageUpload.array("images", 3), updateFranchisee);
+// Text update
+franchiseeRouter.patch(
+    "/franchisees/:id/text",
+    isAuthenticated,
+    hasPermission("update_franchisee"),
+    isAdmin,
+    updateFranchiseeText
+);
+
+// Image update
+franchiseeRouter.patch(
+    "/franchisees/:id/images",
+    isAuthenticated,
+    hasPermission("update_franchisee"),
+    isAdmin,
+    franchiseeImageUpload.array("images", 3),
+    updateFranchiseeImages
+);
+
 
 franchiseeRouter.patch(
     "/franchisees/:id/remove-images",

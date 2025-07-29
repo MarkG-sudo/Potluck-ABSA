@@ -213,7 +213,7 @@ export const getAllUsers = async (req, res) => {
 
 export const getMyProfile = async (req, res) => {
     try {
-        const user = await UserModel.findById(req.user.id).select("-password");
+        const user = await UserModel.findById(req.auth.id).select("-password");
         if (!user) return res.status(404).json({ message: "User not found" });
         res.status(200).json(user);
     } catch (err) {

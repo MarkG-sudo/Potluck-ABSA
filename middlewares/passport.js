@@ -36,7 +36,7 @@ passport.use(new GoogleStrategy({
                 firstName: profile.name?.givenName || "",
                 lastName: profile.name?.familyName || "",
                 email,
-                password: "GOOGLE_AUTH",
+                source: "google",
                 role,
                 isApproved: isPotlucky,
                 profileCompleted: isPotlucky,
@@ -95,7 +95,7 @@ passport.use(new GoogleStrategy({
 // passport.use(new GoogleStrategy({
 //     clientID: process.env.GOOGLE_CLIENT_ID,
 //     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-//     callbackURL: `${process.env.BACKEND_URL}/auth/google/callback`, 
+//     callbackURL: `${process.env.BACKEND_URL}/auth/google/callback`,
 //     proxy: true  // MUst
 // },  async (accessToken, refreshToken, profile, done) => {
 //     try {

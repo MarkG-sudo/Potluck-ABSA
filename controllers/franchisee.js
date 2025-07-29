@@ -36,56 +36,64 @@ export const createFranchisee = async (req, res) => {
     }
 };
 
-export const updateFranchisee = async (req, res) => {
+export const updateFranchiseeText = async (req, res) => {
     try {
-        // Get uploaded image URLs
-        const imageUrls = req.files?.map(file => file.path) || [];
+        const { error, value } = updateFranchiseeValidator.validate(req.body);
 
-        // Shallow clone req.body to avoid mutating it directly
-        const bodyWithoutImages = { ...req.body };
-        delete bodyWithoutImages.images; // Remove if present
-
-        const { error, value } = updateFranchiseeValidator.validate(bodyWithoutImages);
-
-        const noBodyFields = !value || Object.keys(value).length === 0;
-        const noFiles = !req.files || req.files.length === 0;
-
-        if (error || (noBodyFields && noFiles)) {
+        if (error || !value || Object.keys(value).length === 0) {
             return res.status(422).json({
                 error: error ? error.details.map(d => d.message) : ["Update at least one field."]
             });
         }
 
-        // Fetch existing franchisee
-        const franchisee = await FranchiseeModel.findById(req.params.id);
-        if (!franchisee) {
-            return res.status(404).json({ message: "Franchisee not found" });
-        }
-
-        // Merge new images with existing ones (max 10)
-        const existingImages = franchisee.images || [];
-        const combinedImages = [...existingImages, ...imageUrls].slice(0, 10);
-
-        // Build update payload
-        const updateData = {
-            ...value,
-            images: combinedImages
-        };
-
         const updated = await FranchiseeModel.findByIdAndUpdate(
             req.params.id,
-            updateData,
+            value,
             { new: true, runValidators: true }
         );
 
+        if (!updated) {
+            return res.status(404).json({ message: "Franchisee not found" });
+        }
+
         res.status(200).json({
-            message: "✅ Franchisee updated successfully (with merged images)",
+            message: "✅ Franchisee text fields updated successfully",
             data: updated
         });
     } catch (err) {
         res.status(500).json({ message: "Server Error", error: err.message });
     }
 };
+
+
+export const updateFranchiseeImages = async (req, res) => {
+    try {
+        const imageUrls = req.files?.map(file => file.path) || [];
+
+        if (imageUrls.length === 0) {
+            return res.status(400).json({ error: "Please upload at least one image." });
+        }
+
+        const franchisee = await FranchiseeModel.findById(req.params.id);
+        if (!franchisee) {
+            return res.status(404).json({ message: "Franchisee not found" });
+        }
+
+        const existingImages = franchisee.images || [];
+        const combinedImages = [...existingImages, ...imageUrls].slice(0, 3);
+
+        franchisee.images = combinedImages;
+        await franchisee.save();
+
+        res.status(200).json({
+            message: "✅ Franchisee images updated successfully",
+            data: franchisee
+        });
+    } catch (err) {
+        res.status(500).json({ message: "Server Error", error: err.message });
+    }
+};
+
 
 
 
