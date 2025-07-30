@@ -1,6 +1,7 @@
 
 import { UserModel } from "../models/users.js";
 import { completeProfileValidator } from "../validators/completeProfile.js";
+import bcrypt from "bcryptjs";
 
 export const updateGoogleUserProfile = async (req, res, next) => {
     try {
@@ -12,10 +13,17 @@ export const updateGoogleUserProfile = async (req, res, next) => {
             return res.status(403).json({ error: "Profile update not allowed or already completed." });
         }
 
+        // Update fields
         user.role = value.role;
         user.phone = value.phone;
         user.profileCompleted = true;
-        user.isApproved = value.role === "potlucky"; // auto-approve only potlucky
+        user.isApproved = value.role === "potlucky";
+
+        // ✅ Handle optional password setup
+        if (value.password) {
+            user.password = await bcrypt.hash(value.password, 10);
+            user.source = "local"; // allow fallback login via email/password
+        }
 
         await user.save();
 

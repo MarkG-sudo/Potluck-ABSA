@@ -13,7 +13,7 @@ reviewMealRouter.patch("/meals/:mealId/review", isAuthenticated, updateMealRevie
 reviewMealRouter.delete("/meals/:mealId/review", isAuthenticated, deleteMealReview);
 
 // Favorites
-reviewMealRouter.post("/meals/:mealId/favorite", isAuthenticated, toggleFavoriteMeal);
+reviewMealRouter.patch("/meals/:mealId/favorite", isAuthenticated, toggleFavoriteMeal);
 reviewMealRouter.get("/meals/:id/favorites", isAuthenticated, getMyFavorites);
 
 

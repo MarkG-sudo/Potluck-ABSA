@@ -104,12 +104,20 @@ export const signInUser = async (req, res, next) => {
             return res.status(404).json({ error: "Account does not exist!" });
         }
 
+        // ✅ Block login if Google account with no password fallback
+        if (user.source === "google" && user.password === "GOOGLE_AUTH") {
+            return res.status(403).json({
+                error: "This account uses Google Sign-In. Please use Google to log in or set a password."
+            });
+        }
+
+        // ✅ Validate password
         const isPasswordCorrect = await bcrypt.compare(value.password, user.password);
         if (!isPasswordCorrect) {
             return res.status(401).json({ error: "Invalid credentials!" });
         }
 
-        // ✅ Block unapproved potchef or operator accounts
+        // ✅ Block unapproved potchef or franchisee accounts
         const rolesRequiringApproval = ["potchef", "franchisee"];
         if (rolesRequiringApproval.includes(user.role) && !user.isApproved) {
             return res.status(403).json({
@@ -137,6 +145,7 @@ export const signInUser = async (req, res, next) => {
         next(error);
     }
 };
+
 
 export const getOneUser = async (req, res) => {
     try {

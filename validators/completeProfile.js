@@ -1,9 +1,7 @@
-
 import Joi from "joi";
 
 export const completeProfileValidator = Joi.object({
-    role: Joi.string().valid("potchef", "potlucky", "operator", "admin").required(),
-    phone: Joi.string().pattern(/^[0-9]{9,15}$/).required().messages({
-        "string.pattern.base": "Phone must be 9–15 digits"
-    })
+    role: Joi.string().valid("potchef", "potlucky", "franchisee").required(),
+    phone: Joi.string().pattern(/^0\d{9}$/).required(),
+    password: Joi.string().min(8).optional()
 });
