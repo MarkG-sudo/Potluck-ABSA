@@ -26,7 +26,7 @@ export const registerUserValidator = Joi.object({
 
     // 👇 Excludes 'admin' and 'pending' from public signup
     role: Joi.string()
-        .valid('potchef', 'potlucky', 'franchisee')
+        .valid('potchef', 'potlucky',)
         .required()
 })
     .messages({

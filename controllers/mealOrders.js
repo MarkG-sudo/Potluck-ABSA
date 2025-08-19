@@ -1,6 +1,7 @@
 import { Meal } from "../models/meals.js";
 import { MealOrder } from "../models/mealOrder.js";
 import { createOrderValidator, orderQueryValidator } from "../validators/mealOrder.js";
+import { sendUserNotification } from "../utils/push.js";
 
 
 // POtlucky
@@ -38,9 +39,18 @@ export const placeOrder = async (req, res, next) => {
             notes
         });
 
+        const populatedOrder = await MealOrder.findById(newOrder._id);
+
+        // 🔔 Notify chef of new order
+        await sendUserNotification(chef, {
+            title: "🍽️ New Order Received",
+            body: `A customer just ordered ${quantity}x ${mealDoc.mealName}.`,
+            url: "/dashboard/orders"
+        });
+
         res.status(201).json({
             message: "Order placed successfully",
-            order: newOrder
+            order: populatedOrder
         });
     } catch (err) {
         next(err);
@@ -160,15 +170,13 @@ export const updateOrderStatus = async (req, res, next) => {
         const order = await MealOrder.findOne({
             _id: orderId,
             chef: req.auth.id
-        });
+        }).populate("meal buyer");
 
         if (!order) {
             return res.status(404).json({ error: "Order not found or access denied" });
         }
 
         order.status = status;
-
-        // ⏱ Optional timestamps
         if (status === "Preparing") order.acceptedAt = new Date();
         if (status === "Ready") order.readyAt = new Date();
         if (status === "Delivering") order.deliveringAt = new Date();
@@ -176,8 +184,15 @@ export const updateOrderStatus = async (req, res, next) => {
         if (status === "Cancelled") order.cancelledAt = new Date();
 
         order.updatedBy = req.auth.id;
-
         await order.save();
+
+        // 🔔 Notify buyer of order update
+        const mealName = order.meal?.mealName || "your meal";
+        await sendUserNotification(order.buyer._id, {
+            title: "📦 Order Update",
+            body: `Your order for ${mealName} is now ${status}.`,
+            url: "/orders"
+        });
 
         res.json({
             message: `Order has been ${status.toLowerCase()}`,
@@ -187,3 +202,50 @@ export const updateOrderStatus = async (req, res, next) => {
         next(err);
     }
 };
+
+
+
+// saved
+
+// export const placeOrder = async (req, res, next) => {
+//     try {
+//         // ✅ Validate request body
+//         const { error, value } = createOrderValidator.validate(req.body);
+//         if (error) {
+//             return res.status(422).json({ error: error.details.map(d => d.message) });
+//         }
+
+//         const { meal, quantity, pickupTime, notes } = value;
+
+//         // ✅ Find meal
+//         const mealDoc = await Meal.findById(meal).populate("createdBy", "_id");
+//         if (!mealDoc) {
+//             return res.status(404).json({ error: "Meal not found" });
+//         }
+
+//         // ✅ Prevent ordering unavailable meals
+//         if (mealDoc.status !== "Available" && mealDoc.status !== "Approved") {
+//             return res.status(400).json({ error: "Meal is not available for ordering" });
+//         }
+
+//         const totalPrice = mealDoc.price * quantity;
+//         const chef = mealDoc.createdBy._id;
+
+//         const newOrder = await MealOrder.create({
+//             meal,
+//             buyer: req.auth.id,
+//             chef,
+//             quantity,
+//             pickupTime,
+//             totalPrice,
+//             notes
+//         });
+
+//         res.status(201).json({
+//             message: "Order placed successfully",
+//             order: newOrder
+//         });
+//     } catch (err) {
+//         next(err);
+//     }
+// };

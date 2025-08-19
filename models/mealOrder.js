@@ -54,6 +54,17 @@ const mealOrderSchema = new Schema(
         timestamps: true
     }
 );
+// ✅ Always auto-populate meal, chef, buyer when querying
+function autoPopulate(next) {
+    this.populate("meal", "mealName price status")
+        .populate("chef", "firstName lastName email")
+        .populate("buyer", "firstName lastName email");
+    next();
+}
+
+mealOrderSchema.pre("find", autoPopulate);
+mealOrderSchema.pre("findOne", autoPopulate);
+mealOrderSchema.pre("findById", autoPopulate);
 
 mealOrderSchema.plugin(toJSON);
 

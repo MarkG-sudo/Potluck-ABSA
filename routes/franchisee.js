@@ -8,7 +8,7 @@ import {
     getFranchiseeById
 } from "../controllers/franchisee.js";
 import { hasPermission, isAuthenticated } from '../middlewares/auth.js';
-import { isAdmin } from "../middlewares/roles.js";
+import { isAdmin } from "../middlewares/isAdmin.js";
 import { franchiseeImageUpload } from "../middlewares/cloudinary.js";
 
 const franchiseeRouter = Router();

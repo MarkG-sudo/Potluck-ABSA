@@ -31,7 +31,7 @@ const userSchema = new Schema({
     avatar: { type: String, default: "" },
     role: {
         type: String,
-        enum: ['potchef', 'potlucky', 'franchisee', 'admin', 'pending'],
+        enum: ['potchef', 'potlucky', 'admin', 'pending'],
         required: true
     },
     isApproved: { type: Boolean, default: false },

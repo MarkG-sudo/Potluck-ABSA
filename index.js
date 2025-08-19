@@ -10,6 +10,7 @@ import orderRouter from "./routes/mealOrder.js";
 import adminRouter from "./routes/adminApproval.js";
 import franchiseeRouter from "./routes/franchisee.js";
 import gAuthRouter from "./routes/auth.js";
+import notificationRouter from "./routes/notifications.js";
 import dotenv from "dotenv";
 
 
@@ -48,6 +49,7 @@ app.use(orderRouter);
 app.use(adminRouter);
 app.use(gAuthRouter);
 app.use(franchiseeRouter);
+app.use(notificationRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
