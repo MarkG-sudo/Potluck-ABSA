@@ -34,6 +34,22 @@ const userSchema = new Schema({
         enum: ['potchef', 'potlucky', 'admin', 'pending'],
         required: true
     },
+    // ✅ Paystack payouts
+    payoutDetails: {
+        type: {
+            type: String,
+            enum: ["bank", "momo"],
+            required: false
+        },
+        bankCode: { type: String, trim: true }, // for bank transfers
+        accountNumber: { type: String, trim: true }, // bank account or momo number
+        momoProvider: { type: String, enum: ["mtn", "vodafone", "airteltigo"], trim: true }, // momo only
+    },
+
+    paystackSubaccount: {
+        type: String, // ACCT_xxxxxxxx
+        trim: true
+    },
     isApproved: { type: Boolean, default: false },
     approvedAt: { type: Date },
     profileCompleted: { type: Boolean, default: false },

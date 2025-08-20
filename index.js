@@ -11,6 +11,7 @@ import adminRouter from "./routes/adminApproval.js";
 import franchiseeRouter from "./routes/franchisee.js";
 import gAuthRouter from "./routes/auth.js";
 import notificationRouter from "./routes/notifications.js";
+import paystackRouter from "./routes/paystack.js";
 import dotenv from "dotenv";
 
 
@@ -50,6 +51,7 @@ app.use(adminRouter);
 app.use(gAuthRouter);
 app.use(franchiseeRouter);
 app.use(notificationRouter);
+app.use("/api/payments", paystackRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

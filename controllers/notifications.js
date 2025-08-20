@@ -58,3 +58,35 @@ export const broadcastToAll = async (req, res, next) => {
         next(err);
     }
 };
+
+// ✅ Unsubscribe from push notifications
+export const unsubscribeToNotifications = async (req, res, next) => {
+    try {
+        // 1. Get the endpoint from the request body
+        const { endpoint } = req.body;
+
+        // 2. Basic validation: Check if endpoint is provided
+        if (!endpoint) {
+            return res.status(400).json({ error: "Endpoint is required." });
+        }
+
+        // 3. Find and delete the subscription
+        //    - Delete by endpoint AND user ID for maximum security and accuracy.
+        const result = await SubscriptionModel.findOneAndDelete({
+            endpoint: endpoint,
+            user: req.auth.id // Ensures a user can only delete their own subscriptions
+        });
+
+        // 4. Handle the result
+        if (!result) {
+            // Nothing was found to delete. This might be ok (idempotent), so we still return a success.
+            return res.status(200).json({ message: "Subscription not found or already removed." });
+        }
+
+        // 5. Success response
+        res.status(200).json({ message: "Unsubscribed from notifications successfully." });
+
+    } catch (err) {
+        next(err);
+    }
+};

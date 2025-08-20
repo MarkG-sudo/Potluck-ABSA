@@ -10,12 +10,49 @@ const objectIdValidator = (value, helpers) => {
 
 export const createOrderValidator = Joi.object({
     meal: Joi.string().custom(objectIdValidator).required().label("Meal ID"),
-    quantity: Joi.number().min(1).required().label("Quantity"),
-    pickupTime: Joi.date().iso().greater("now").required().label("Pickup Time").messages({
-        "date.base": "Pickup time must be a valid date",
-        "date.greater": "Pickup time must be in the future"
-    }), 
-    notes: Joi.string().max(300).optional().allow("").label("Notes")
+    quantity: Joi.number().min(1).max(10).required().label("Quantity"),
+    pickupTime: Joi.date()
+        .iso()
+        .required()
+        .label("Pickup Time")
+        .custom((value, helpers) => {
+            const now = new Date();
+            const minPickupTime = new Date(now.getTime() + 30 * 60 * 1000); // 30 minutes buffer
+            const maxPickupTime = new Date(now.getTime() + 60 * 60 * 1000); // 60 minutes buffer
+
+            if (value <= now) {
+                return helpers.error("date.greater");
+            }
+            if (value < minPickupTime) {
+                return helpers.error("date.tooEarly", { limit: 30 });
+            }
+            if (value > maxPickupTime) {
+                return helpers.error("date.tooLate", { limit: 60 });
+            }
+            return value;
+        })
+        .messages({
+            "date.base": "Pickup time must be a valid date",
+            "date.greater": "Pickup time must be in the future",
+            "date.tooEarly": "Pickup time must be at least {#limit} minutes from now to allow for preparation",
+            "date.tooLate": "Pickup time cannot be more than {#limit} minutes from now" // New error message
+        }),
+    notes: Joi.string().max(300).optional().allow("").label("Notes"),
+    paymentMethod: Joi.string().valid("paystack", "momo", "bank", "cash").required(),
+    // ✅ Only required if paymentMethod === "momo"
+    momo: Joi.when("paymentMethod", {
+        is: "momo",
+        then: Joi.object({
+            phone: Joi.string()
+                .pattern(/^[0-9]{10}$/) // Ghana phone format (10 digits)
+                .required()
+                .messages({ "string.pattern.base": "Phone must be 10 digits" }),
+            provider: Joi.string()
+                .valid("mtn", "vodafone", "airteltigo")
+                .required()
+        }),
+        otherwise: Joi.forbidden()
+    })
 });
 
 

@@ -40,7 +40,17 @@ const mealOrderSchema = new Schema(
         notes: {
             type: String,
             trim: true
-        },        
+        },  
+        commission: { type: Number, min: 0 },        // 15% fee
+        vendorEarnings: { type: Number, min: 0 },   // after commission
+        platformEarnings: { type: Number, min: 0 }, // commission stored for platform reporting ✅
+        
+        payment: {
+            method: { type: String, enum: ["paystack", "momo", "bank", "cash"], required: true },
+            status: { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
+            reference: { type: String }
+        },
+
         acceptedAt: { type: Date, default: null },
         readyAt: { type: Date, default: null },        
         deliveringAt: { type: Date, default: null },

@@ -26,8 +26,19 @@ export const registerUserValidator = Joi.object({
 
     // 👇 Excludes 'admin' and 'pending' from public signup
     role: Joi.string()
-        .valid('potchef', 'potlucky',)
-        .required()
+        .valid('potchef', 'potlucky', 'pending')
+        .required(),
+        
+    payoutDetails: Joi.when("role", {
+        is: "potchef",
+        then: Joi.object({
+            type: Joi.string().valid("bank", "momo").required(),
+            bankCode: Joi.when("type", { is: "bank", then: Joi.string().required() }),
+            accountNumber: Joi.string().required(),
+            momoProvider: Joi.when("type", { is: "momo", then: Joi.string().valid("mtn", "vodafone", "airteltigo").required() })
+        }).required(),
+        otherwise: Joi.forbidden()
+    })
 })
     .messages({
         'any.required': 'All fields marked * are required',
