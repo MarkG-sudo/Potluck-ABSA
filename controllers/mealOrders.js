@@ -4,6 +4,7 @@ import { MealOrder } from "../models/mealOrder.js";
 import { createOrderValidator, orderQueryValidator } from "../validators/mealOrder.js";
 import { initiatePayment } from "../utils/paystack.js"; // 
 import { sendUserNotification } from "../utils/push.js";
+import { NotificationModel } from "../models/notifications.js";
 
 
 
@@ -80,11 +81,20 @@ export const placeOrder = async (req, res, next) => {
         // ✅ Auto-populate meal, chef, buyer
         const populatedOrder = await MealOrder.findById(newOrder._id);
 
-        // 🔔 Notify chef of new order
+        // 🔔 1. Send PUSH notification to chef (for immediate alert)
         await sendUserNotification(chef, {
             title: "🍽️ New Order Received",
             body: `A customer just ordered ${quantity}x ${mealDoc.mealName}.`,
             url: "/dashboard/orders"
+        });
+
+        // 📬 2. Save NOTIFICATION to database (for the chef's bell icon inbox)
+        await NotificationModel.create({
+            user: chef, // The chef will see this in their notification list
+            title: "🍽️ New Order",
+            body: `You have a new order for ${quantity}x ${mealDoc.mealName}.`,
+            url: `/dashboard/orders/${newOrder._id}`, // Deep link to the order in chef's dashboard
+            type: 'order'
         });
 
         res.status(201).json({
@@ -267,8 +277,8 @@ export const cancelOrder = async (req, res, next) => {
             status: "Pending"
         })
             .populate('meal', 'mealName')
-            .populate('buyer', 'firstName lastName role') // Populate role to confirm identity
-            .populate('chef', 'firstName lastName role');  // Populate role to confirm identity
+            .populate('buyer', 'firstName lastName role')
+            .populate('chef', 'firstName lastName role');
 
         if (!order) {
             return res.status(404).json({ error: "Order not found or not in a cancellable state ('Pending')." });
@@ -278,7 +288,6 @@ export const cancelOrder = async (req, res, next) => {
         const isBuyer = req.auth.id === order.buyer._id.toString();
         const isChef = req.auth.id === order.chef._id.toString();
 
-        // If the current user is neither, they have no business here.
         if (!isBuyer && !isChef) {
             return res.status(403).json({ error: "Access denied. You can only cancel your own orders." });
         }
@@ -289,11 +298,10 @@ export const cancelOrder = async (req, res, next) => {
         await order.save();
 
         // 4. Determine actor and target based on ROLE + ID
-        //    We use the role from the populated document for absolute clarity.
         let notificationTargetId;
         let notificationTitle;
         let notificationBody;
-        let actorName = `${req.auth.firstName} ${req.auth.lastName}`; // Use auth data for actor
+        let actorName = `${req.auth.firstName} ${req.auth.lastName}`;
 
         if (isChef) {
             // Actor is the Chef -> Notify the Buyer
@@ -307,11 +315,20 @@ export const cancelOrder = async (req, res, next) => {
             notificationBody = `${actorName} (Customer) cancelled their order for ${order.quantity}x ${order.meal.mealName}.`;
         }
 
-        // 🔔 Send the personalized notification
+        // 🔔 1. Send PUSH notification (for immediate alert)
         await sendUserNotification(notificationTargetId, {
             title: notificationTitle,
             body: notificationBody,
-            url: "/dashboard/orders"
+            url: "/orders" // Send user to their orders page
+        });
+
+        // 📬 2. Save NOTIFICATION to database (for the target's bell icon inbox)
+        await NotificationModel.create({
+            user: notificationTargetId, // Save it for the person who was notified
+            title: notificationTitle,
+            body: notificationBody,
+            url: `/orders/${order._id}`, // Deep link to the specific cancelled order
+            type: 'order'
         });
 
         // 5. Send response
@@ -504,7 +521,7 @@ export const updateOrderStatus = async (req, res, next) => {
         console.log("DEBUG: [2] Buyer ID:", order.buyer._id.toString());
         console.log("DEBUG: [3] Notification Payload:", { title: notificationTitle, body: notificationBody, url: "/orders" });
 
-        // 🔔 Notify buyer of the order update
+        // 🔔 Notify buyer of the order update (push notification)
         await sendUserNotification(order.buyer._id, {
             title: notificationTitle,
             body: notificationBody,
@@ -513,16 +530,34 @@ export const updateOrderStatus = async (req, res, next) => {
 
         console.log("DEBUG: [4] Successfully called sendUserNotification");
 
+        // 📝 Store notification in database
+        try {
+            const notification = new NotificationModel({
+                user: order.buyer._id,
+                title: notificationTitle,
+                body: notificationBody,
+                url: "/orders",
+                type: 'order', // Using 'order' type as per your schema enum
+                isRead: false
+            });
+
+            await notification.save();
+            console.log("DEBUG: [5] Notification stored in database:", notification._id);
+        } catch (dbError) {
+            console.error("DEBUG: [6] Error storing notification in database:", dbError);
+            // Don't throw error here to avoid breaking the main flow
+            // You might want to log this to a monitoring service
+        }
+
         res.json({
             message: `Order status updated to '${status}' successfully.`,
             order
         });
     } catch (err) {
-        console.error("DEBUG: [5] Error in updateOrderStatus controller:", err);
+        console.error("DEBUG: [7] Error in updateOrderStatus controller:", err);
         next(err);
     }
 };
-
 
 
 // saved
