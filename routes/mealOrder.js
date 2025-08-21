@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-    placeOrder, getMyOrders, cancelOrder, getChefOrders, updateOrderStatus } from "../controllers/mealOrders.js";
+    placeOrder, getMyOrders, cancelOrder, getChefOrders, updateOrderStatus, getOneOrder } from "../controllers/mealOrders.js";
 import { isAuthenticated, hasPermission } from "../middlewares/auth.js";
 
 const orderRouter = Router();
@@ -29,6 +29,8 @@ orderRouter.patch(
     hasPermission("update_order_status"),
     updateOrderStatus
 );
+
+orderRouter.get('/chef/:orderId', isAuthenticated, hasPermission("view_incoming_orders"), getOneOrder);
 
 
 export default orderRouter;

@@ -5,6 +5,7 @@ import { createOrderValidator, orderQueryValidator } from "../validators/mealOrd
 import { initiatePayment } from "../utils/paystack.js"; // 
 import { sendUserNotification } from "../utils/push.js";
 import { NotificationModel } from "../models/notifications.js";
+import mongoose from "mongoose";
 
 
 
@@ -366,6 +367,7 @@ export const getChefOrders = async (req, res, next) => {
             .skip(skip)
             .limit(limit)
             .lean();
+            
 
         const total = await MealOrder.countDocuments(filter);
 
@@ -375,6 +377,34 @@ export const getChefOrders = async (req, res, next) => {
             total,
             orders
         });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getOneOrder = async (req, res, next) => {
+    try {
+        const { orderId } = req.params;
+
+        // Validate orderId
+        if (!mongoose.Types.ObjectId.isValid(orderId)) {
+            return res.status(400).json({ error: "Invalid order ID" });
+        }
+
+        const order = await MealOrder.findOne({
+            _id: orderId,
+            chef: req.auth.id 
+        })
+            .populate("meal", "title price photos category") // Added more meal fields
+            .populate("buyer", "firstName lastName phone email") // Added email for contact
+            .populate("chef", "firstName lastName phone email") // Populate chef info too
+            .lean();
+
+        if (!order) {
+            return res.status(404).json({ error: "Order not found or access denied" });
+        }
+
+        res.json(order);
     } catch (err) {
         next(err);
     }

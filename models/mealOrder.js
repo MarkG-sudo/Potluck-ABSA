@@ -63,14 +63,23 @@ const mealOrderSchema = new Schema(
     {
         timestamps: true
     }
-);
-// ✅ Always auto-populate meal, chef, buyer when querying
+); 
 function autoPopulate(next) {
-    this.populate("meal", "mealName price status")
-        .populate("chef", "firstName lastName email")
-        .populate("buyer", "firstName lastName email");
+    // Only apply default population if no specific population was requested
+    if (!this._mongooseOptions.populate) {
+        this.populate("meal", "mealName price status")
+            .populate("chef", "firstName lastName email")
+            .populate("buyer", "firstName lastName phone");
+    }
     next();
 }
+// ✅ Always auto-populate meal, chef, buyer when querying
+// function autoPopulate(next) {
+//     this.populate("meal", "mealName price status")
+//         .populate("chef", "firstName lastName email")
+//         .populate("buyer", "firstName lastName phone email");
+//     next();
+// }
 
 mealOrderSchema.pre("find", autoPopulate);
 mealOrderSchema.pre("findOne", autoPopulate);

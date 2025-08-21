@@ -54,11 +54,22 @@ const mealSchema = new Schema({
 
     averageRating: { type: Number, default: 0 },
     reviewCount: { type: Number, default: 0 },
+    
 
 
 }, {
     timestamps: true
 });
+// Add virtual for all reviews
+mealSchema.virtual('reviews', {
+    ref: 'MealReview', // The model to use
+    localField: '_id', // Find reviews where `localField`
+    foreignField: 'meal', // is equal to `foreignField`
+    options: { sort: { createdAt: -1 } } // Optional: sort reviews
+});
+
+// Enable virtuals in JSON output
+mealSchema.set('toJSON', { virtuals: true });
 
 mealSchema.plugin(toJSON);
 

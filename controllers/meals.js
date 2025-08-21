@@ -113,6 +113,7 @@ export const getAllMeals = async (req, res, next) => {
 };
 
 // View one meal 
+
 export const getMealById = async (req, res, next) => {
     try {
         const { id } = req.params;
@@ -121,7 +122,17 @@ export const getMealById = async (req, res, next) => {
             return res.status(400).json({ error: "Invalid meal ID" });
         }
 
-        const meal = await Meal.findById(id).populate("createdBy", "firstName lastName avatar");
+        const meal = await Meal.findById(id)
+            .populate("createdBy", "firstName lastName avatar")
+            .populate({
+                path: 'reviews', // Populate the virtual field
+                select: 'reviewer rating comment createdAt',
+                options: { sort: { createdAt: -1 } }, // Sort reviews by latest first
+                populate: {
+                    path: 'reviewer',
+                    select: 'firstName lastName avatar' // Populate reviewer info
+                }
+            });
 
         if (!meal) {
             return res.status(404).json({ error: "Meal not found" });
@@ -132,6 +143,25 @@ export const getMealById = async (req, res, next) => {
         next(err);
     }
 };
+// export const getMealById = async (req, res, next) => {
+//     try {
+//         const { id } = req.params;
+
+//         if (!mongoose.Types.ObjectId.isValid(id)) {
+//             return res.status(400).json({ error: "Invalid meal ID" });
+//         }
+
+//         const meal = await Meal.findById(id).populate("createdBy", "firstName lastName avatar");
+
+//         if (!meal) {
+//             return res.status(404).json({ error: "Meal not found" });
+//         }
+
+//         res.json(meal);
+//     } catch (err) {
+//         next(err);
+//     }
+// };
 
 // Update meal by ID
 
@@ -207,7 +237,15 @@ export const deleteMeal = async (req, res, next) => {
 // Get meals by Potchef (authenticated)
 export const getMyMeals = async (req, res, next) => {
     try {
-        const meals = await Meal.find({ createdBy: req.auth.id });
+        const meals = await Meal.find({ createdBy: req.auth.id })
+            .populate({
+                path: 'reviews', // Use the virtual field
+                select: 'reviewer rating comment createdAt',
+                populate: {
+                    path: 'reviewer',
+                    select: 'firstName lastName'
+                }
+            });
 
         res.status(200).json({
             count: meals.length,
@@ -217,6 +255,18 @@ export const getMyMeals = async (req, res, next) => {
         next(error);
     }
 };
+// export const getMyMeals = async (req, res, next) => {
+//     try {
+//         const meals = await Meal.find({ createdBy: req.auth.id });
+
+//         res.status(200).json({
+//             count: meals.length,
+//             meals
+//         });
+//     } catch (error) {
+//         next(error);
+//     }
+// };
 
 // Get one of meals by Potchef (authenticated)
 export const getMyMealById = async (req, res, next) => {
