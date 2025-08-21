@@ -132,40 +132,136 @@ export const subscribeToNotifications = async (req, res, next) => {
 };
 
 // ✅ Trigger a notification for current user (manual or auto)
+// export const sendNotification = async (req, res, next) => {
+//     try {
+//         const payload = {
+//             title: "New Update!",
+//             body: "You’ve got something fresh on Potluck 🍲",
+//             icon: "/logo-192.png"
+//         };
+
+//         await sendUserNotification(req.auth.id, payload);
+
+//         res.json({ message: "Notifications sent." });
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+// ✅ Admin broadcast to ALL users
+// export const broadcastToAll = async (req, res, next) => {
+//     try {
+//         const { title, body, url } = req.body;
+
+//         const subscriptions = await SubscriptionModel.find(); // all subs
+
+//         await Promise.all(
+//             subscriptions.map(sub =>
+//                 sendPushNotification(sub, { title, body, url })
+//             )
+//         );
+
+//         res.json({ message: "Broadcast sent." });
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
+
+// ✅ Send notification to current user and store in DB
 export const sendNotification = async (req, res, next) => {
     try {
         const payload = {
             title: "New Update!",
-            body: "You’ve got something fresh on Potluck 🍲",
-            icon: "/logo-192.png"
+            body: "You've got something fresh on Potluck 🍲",
+            icon: "/logo-192.png",
+            url: "/" // Default URL
         };
 
+        // Send push notification
         await sendUserNotification(req.auth.id, payload);
 
-        res.json({ message: "Notifications sent." });
+        // Store notification in database
+        const notification = new NotificationModel({
+            user: req.auth.id,
+            title: payload.title,
+            body: payload.body,
+            url: payload.url,
+            type: 'system' // Using 'system' type as per your schema enum
+        });
+
+        await notification.save();
+
+        res.json({
+            message: "Notification sent and stored.",
+            notificationId: notification._id
+        });
     } catch (err) {
         next(err);
     }
 };
 
-// ✅ Admin broadcast to ALL users
+// ✅ Admin broadcast to ALL users and store in DB for each user
 export const broadcastToAll = async (req, res, next) => {
     try {
-        const { title, body, url } = req.body;
+        const { title, body, url = "/" } = req.body;
 
-        const subscriptions = await SubscriptionModel.find(); // all subs
+        // Validate required fields
+        if (!title || !body) {
+            return res.status(400).json({ error: "Title and body are required" });
+        }
 
-        await Promise.all(
+        const subscriptions = await SubscriptionModel.find().populate('user');
+
+        // Send push notifications
+        const pushResults = await Promise.allSettled(
             subscriptions.map(sub =>
                 sendPushNotification(sub, { title, body, url })
             )
         );
 
-        res.json({ message: "Broadcast sent." });
+        // Get all unique user IDs from subscriptions
+        const userSubscriptions = subscriptions.filter(sub => sub.user);
+        const uniqueUserIds = [...new Set(userSubscriptions.map(sub => sub.user._id.toString()))];
+
+        // Store notifications for all users (even those without push subscriptions)
+        // If you want to store only for users with subscriptions, use uniqueUserIds
+        const allUsers = await UserModel.find({}, '_id'); // Get all user IDs
+
+        const notificationPromises = allUsers.map(user =>
+            new NotificationModel({
+                user: user._id,
+                title,
+                body,
+                url,
+                type: 'system'
+            }).save()
+        );
+
+        const dbResults = await Promise.allSettled(notificationPromises);
+
+        // Log results for monitoring
+        console.log("Broadcast results:", {
+            pushNotificationsSent: pushResults.filter(r => r.status === 'fulfilled').length,
+            pushNotificationsFailed: pushResults.filter(r => r.status === 'rejected').length,
+            notificationsStored: dbResults.filter(r => r.status === 'fulfilled').length,
+            storageFailed: dbResults.filter(r => r.status === 'rejected').length
+        });
+
+        res.json({
+            message: "Broadcast completed.",
+            stats: {
+                pushSent: pushResults.filter(r => r.status === 'fulfilled').length,
+                pushFailed: pushResults.filter(r => r.status === 'rejected').length,
+                notificationsStored: dbResults.filter(r => r.status === 'fulfilled').length
+            }
+        });
     } catch (err) {
         next(err);
     }
 };
+
 
 // ✅ Unsubscribe from push notifications
 export const unsubscribeToNotifications = async (req, res, next) => {
