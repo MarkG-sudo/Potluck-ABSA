@@ -1,4 +1,5 @@
 import { expressjwt } from "express-jwt";
+import jwt from "jsonwebtoken";
 import { permissions } from "../utils/rbac.js";
 import { UserModel } from "../models/users.js";
 
@@ -40,6 +41,43 @@ export const hasPermission = (action) => {
             next(error);
         }
     };
+};
+
+// middlewares/tempAuth.js
+export const allowTempAuth = (req, res, next) => {
+    try {
+        console.log("=== TEMP AUTH MIDDLEWARE ===");
+        console.log("Full headers:", req.headers);
+
+        const authHeader = req.headers.authorization;
+        console.log("Auth header:", authHeader);
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            console.log("No Bearer token found");
+            return res.status(401).json({ error: "Temp token required" });
+        }
+
+        const token = authHeader.replace('Bearer ', '');
+        console.log("Extracted token:", token);
+        console.log("JWT Secret length:", process.env.JWT_PRIVATE_KEY?.length);
+
+        const decoded = jwt.verify(token, process.env.JWT_PRIVATE_KEY);
+        console.log("Decoded token:", decoded);
+
+        if (!decoded.temp) {
+            console.log("Token missing temp flag");
+            return res.status(401).json({ error: "Invalid temp token" });
+        }
+
+        req.auth = { id: decoded.id, temp: true };
+        console.log("Authentication successful");
+        next();
+
+    } catch (error) {
+        console.log("❌ Token verification error:", error.message);
+        console.log("Error stack:", error.stack);
+        res.status(401).json({ error: "Invalid or expired temp token" });
+    }
 };
 
 

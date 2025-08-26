@@ -1,33 +1,153 @@
-
 import { UserModel } from "../models/users.js";
-import { completeProfileValidator } from "../validators/completeProfile.js";
+import { updatePayoutDetailsValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
+import axios from "axios";
 
-export const updateGoogleUserProfile = async (req, res, next) => {
+export const completeUserProfile = async (req, res, next) => {
     try {
-        const { error, value } = completeProfileValidator.validate(req.body);
-        if (error) return res.status(400).json({ error: error.details.map(d => d.message) });
+        let user;
 
-        const user = await UserModel.findById(req.auth.id);
-        if (!user || user.role !== "pending") {
-            return res.status(403).json({ error: "Profile update not allowed or already completed." });
+        // Handle both temp auth and regular auth
+        if (req.auth.temp) {
+            // Temp token - allow profile completion even if pending
+            user = await UserModel.findById(req.auth.id);
+        } else {
+            // Regular auth - normal flow
+            user = await UserModel.findById(req.auth.id);
         }
 
-        // Update fields
-        user.role = value.role;
-        user.phone = value.phone;
-        user.profileCompleted = true;
-        user.isApproved = value.role === "potlucky";
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
 
-        // ✅ Handle optional password setup
-        if (value.password) {
-            user.password = await bcrypt.hash(value.password, 10);
-            user.source = "local"; // allow fallback login via email/password
+        // Potchefs need payout details, potlucky just need basic info
+        if (user.role === "potchef") {
+            console.log("Validating payout details...");
+
+            // ✅  Validate req.body.payoutDetails instead of req.body
+            const { error, value } = updatePayoutDetailsValidator.validate(req.body.payoutDetails);
+
+            if (error) {
+                console.log("Validation error:", error.details);
+                return res.status(400).json({ error: error.details.map(d => d.message) });
+            }
+
+            console.log("✅ Validation passed. Value:", value);
+
+            // Update payout details for potchefs
+            user.payoutDetails = value; // This now gets the validated inner object
+            console.log("Updated user payoutDetails:", user.payoutDetails);
+
+            // ✅ CREATE PAYSTACK SUBACCOUNT IF NOT EXISTS
+            if (!user.paystack?.subaccountCode) {
+                try {
+                    const subRes = await axios.post(
+                        "https://api.paystack.co/subaccount",
+                        {
+                            business_name: `${user.firstName} ${user.lastName}`,
+                            settlement_bank: value.bank?.bankCode || value.mobileMoney?.provider,
+                            account_number: value.bank?.accountNumber || value.mobileMoney?.number,
+                            percentage_charge: 15,
+                            currency: "GHS"
+                        },
+                        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+                    );
+
+                    user.paystack = {
+                        subaccountCode: subRes.data.data.subaccount_code,
+                        subaccountId: subRes.data.data.id,
+                        settlementBank: value.bank?.bankCode || value.mobileMoney?.provider,
+                        accountNumber: value.bank?.accountNumber || value.mobileMoney?.number,
+                        percentageCharge: 15 // ← SET TO 15
+                    };
+                } catch (paystackError) {
+                    console.error("❌ Paystack subaccount creation FAILED:");
+                    console.error("Error:", paystackError.message);
+                    console.error("Response data:", paystackError.response?.data);
+                    console.error("Bank details used:", {
+                        bankCode: value.bank?.bankCode,
+                        accountNumber: value.bank?.accountNumber,
+                        provider: value.mobileMoney?.provider
+                    });
+
+                    // Preserve existing paystack data or leave undefined
+                    user.paystack = user.paystack || undefined;
+                }
+            }
+        }
+
+        // Update basic profile information
+        // Update basic profile information
+        const { phone, password } = req.body || {};
+
+        // ✅ Handle phone update
+        if (phone !== undefined) {
+            if (phone === null || phone === '') {
+                user.phone = undefined; // Clear phone if empty
+            } else {
+                user.phone = phone;
+            }
+        }
+
+        // ✅ Handle password update  
+        if (password) {
+            user.password = await bcrypt.hash(password, 10);
+            if (user.source === "google") {
+                user.source = "local";
+            }
+        }
+
+        // Check if profile is complete based on role
+        if (user.role === "potchef") {
+            user.profileCompleted = !!(user.phone && user.payoutDetails);
+        } else {
+            user.profileCompleted = !!user.phone;
         }
 
         await user.save();
 
-        res.json({ message: "Profile updated", user });
+        res.json({
+            message: "Profile updated successfully",
+            user: { ...user.toObject(), password: undefined }
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getProfileCompletionStatus = async (req, res, next) => {
+    try {
+        const user = await UserModel.findById(req.auth.id)
+            .select("role profileCompleted phone payoutDetails");
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        let missingFields = [];
+
+        if (!user.phone) missingFields.push("phone number");
+
+        if (user.role === "potchef") {
+            if (!user.payoutDetails) {
+                missingFields.push("payout details");
+            } else {
+                if (user.payoutDetails.type === "bank") {
+                    if (!user.payoutDetails.bank?.bankCode) missingFields.push("bank code");
+                    if (!user.payoutDetails.bank?.accountNumber) missingFields.push("account number");
+                    if (!user.payoutDetails.bank?.accountName) missingFields.push("account name");
+                } else if (user.payoutDetails.type === "mobileMoney") {
+                    if (!user.payoutDetails.mobileMoney?.provider) missingFields.push("mobile money provider");
+                    if (!user.payoutDetails.mobileMoney?.number) missingFields.push("mobile money number");
+                }
+            }
+        }
+
+        res.json({
+            profileCompleted: user.profileCompleted,
+            missingFields,
+            completionPercentage: user.profileCompleted ? 100 : Math.max(0, 100 - (missingFields.length * 25))
+        });
     } catch (err) {
         next(err);
     }

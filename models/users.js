@@ -16,7 +16,7 @@ const userSchema = new Schema({
         type: String,
         validate: {
             validator: function (v) {
-                return /^0\d{9}$/.test(v); // must start with 0 and have exactly 10 digits
+                return !v || /^0\d{9}$/.test(v); // Allow null for Google OAuth users
             },
             message: props => `${props.value} is not a valid Ghanaian phone number!`
         }
@@ -29,40 +29,75 @@ const userSchema = new Schema({
         }
     },
     avatar: { type: String, default: "" },
+
+    // Role and Status
     role: {
         type: String,
-        enum: ['potchef', 'potlucky', 'admin', 'pending'],
+        enum: ['potchef', 'potlucky', 'admin'],
         required: true
     },
-    // ✅ Paystack payouts
-    payoutDetails: {
-        type: {
-            type: String,
-            enum: ["bank", "momo"],
-            required: false
-        },
-        bankCode: { type: String, trim: true }, // for bank transfers
-        accountNumber: { type: String, trim: true }, // bank account or momo number
-        momoProvider: { type: String, enum: ["mtn", "vodafone", "airteltigo"], trim: true }, // momo only
+    status: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected', 'active'],
+        default: function () {
+            return this.role === 'potchef' ? 'pending' : 'active';
+        }
     },
-
-    paystackSubaccount: {
-        type: String, // ACCT_xxxxxxxx
-        trim: true
-    },
-    isApproved: { type: Boolean, default: false },
     approvedAt: { type: Date },
-    profileCompleted: { type: Boolean, default: false },
-    favorites: [{ type: Schema.Types.ObjectId, ref: "Meal" }],
+
+    // Google OAuth
+    googleId: { type: String, sparse: true, index: true },
+    googleAccessToken: { type: String },
+    googleRefreshToken: { type: String },
     source: {
         type: String,
         enum: ["local", "google"],
         default: "local"
     },
 
+    // Paystack Integration
+    payoutDetails: {
+        bank: {
+            bankCode: { type: String, trim: true },
+            accountNumber: { type: String, trim: true },
+            accountName: { type: String, trim: true }
+        },
+        mobileMoney: {
+            provider: { type: String, enum: ["mtn", "vodafone", "airteltigo"] },
+            number: { type: String, trim: true }
+        }
+    },
+    paystack: {
+        subaccountCode: { type: String, trim: true },
+        subaccountId: { type: String, trim: true },
+        settlementBank: { type: String, trim: true },
+        accountNumber: { type: String, trim: true },
+        percentageCharge: { type: Number, default: 0 }
+    },
+
+    // Profile Management
+    profileCompleted: {
+        type: Boolean,
+        default: function () {
+            // Potchefs need complete profile, potlucky less stringent
+            if (this.role === 'potchef') {
+                return !!(this.phone && this.payoutDetails);
+            }
+            return !!this.phone; // Potlucky only needs phone
+        }
+    },
+    favorites: [{ type: Schema.Types.ObjectId, ref: "Meal" }],
+
+    // Additional useful fields
+    lastLogin: { type: Date },
+    loginCount: { type: Number, default: 0 }
+
 }, {
     timestamps: true
 });
+
+// Index for better query performance
+userSchema.index({ role: 1, status: 1 });
 
 userSchema.plugin(toJSON);
 

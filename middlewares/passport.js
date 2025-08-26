@@ -17,62 +17,72 @@ passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: `${process.env.BACKEND_URL}/auth/google/callback`,
-    proxy: true  // Required for Render.com
+    proxy: true
 }, async (accessToken, refreshToken, profile, done) => {
     try {
-        // Validate profile email exists
         if (!profile.emails?.[0]?.value) {
             throw new Error("No email found in Google profile");
         }
 
         const email = profile.emails[0].value;
-        let user = await UserModel.findOne({ email });
+
+        // Look for user by email OR googleId
+        let user = await UserModel.findOne({
+            $or: [
+                { email },
+                { googleId: profile.id }
+            ]
+        });
 
         if (!user) {
-            const role = "potlucky";
-            const isPotlucky = role === "potlucky";
+            // NEW USER SIGNUP - Only potlucky can sign up via Google
+            const role = "potlucky"; // Only potlucky can sign up via Google
+            const status = "active"; // Potlucky are automatically active
 
             user = await UserModel.create({
                 firstName: profile.name?.givenName || "",
                 lastName: profile.name?.familyName || "",
                 email,
+                googleId: profile.id,
+                googleAccessToken: accessToken,
+                googleRefreshToken: refreshToken,
                 source: "google",
                 role,
-                isApproved: isPotlucky,
-                profileCompleted: isPotlucky,
-                source: "google"
+                status,
+                profileCompleted: !!profile.name?.givenName
             });
 
-            // Email handling
-            const templateName = isPotlucky ? "signup-mail.html" : "pending-approval-mail.html";
-            const templatePath = path.join(__dirname, `../utils/${templateName}`);
-
+            // Send welcome email to potlucky
+            const templatePath = path.join(__dirname, `../utils/signup-mail.html`);
             if (fs.existsSync(templatePath)) {
                 let html = fs.readFileSync(templatePath, "utf-8");
                 html = html.replace(/{{firstName}}/g, user.firstName);
-
                 await mailtransporter.sendMail({
                     from: '"Potluck" <no-reply@potluck.app>',
                     to: user.email,
-                    subject: isPotlucky
-                        ? "Welcome to Potluck 🎉"
-                        : "Potluck Registration Received - Pending Approval",
+                    subject: "Welcome to Potluck 🎉",
                     html
                 });
             }
 
-            if (!isPotlucky && process.env.ADMIN_EMAIL) {
-                await mailtransporter.sendMail({
-                    from: '"Potluck Notifications" <no-reply@potluck.app>',
-                    to: process.env.ADMIN_EMAIL,
-                    subject: `New ${role} account pending approval`,
-                    html: `
-                        <h3>New ${role} registered via Google</h3>
-                        <p>Name: ${user.firstName} ${user.lastName}</p>
-                        <p>Email: ${user.email}</p>
-                    `
-                });
+        } else {
+            // EXISTING USER LOGIN - All roles can login via Google once approved
+
+            // Check if user is allowed to login via Google
+            if (user.role === "potchef" && user.status !== "approved") {
+                throw new Error("Chef account not yet approved. Please wait for admin approval.");
             }
+
+            if (user.role === "potchef" && !user.profileCompleted) {
+                throw new Error("Please complete your profile before using Google login.");
+            }
+
+            // Update user with Google credentials
+            user.googleId = profile.id;
+            user.googleAccessToken = accessToken;
+            user.googleRefreshToken = refreshToken;
+            user.source = "google";
+            await user.save();
         }
 
         return done(null, user);

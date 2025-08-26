@@ -9,43 +9,99 @@ const paystack = axios.create({
 });
 
 /**
- * Initiate a payment
- * @param {Object} params
- * @param {string} params.email - buyer email
- * @param {number} params.amount - amount in pesewas (GHS * 100)
- * @param {Object} params.metadata - extra metadata (orderId, buyerId, etc.)
- * @param {string} params.method - "paystack" | "bank" | "momo"
- * @param {Object} params.momo - optional (phone, provider)
+ * Initiate a payment with subaccount support
  */
-export const initiatePayment = async ({ email, amount, metadata, method, momo }) => {
+export const initiatePayment = async ({
+    email,
+    amount,
+    metadata,
+    method,
+    momo,
+    subaccount,
+    bearer = "subaccount"
+}) => {
+    const basePayload = {
+        email,
+        amount,
+        currency: "GHS",
+        metadata,
+        subaccount, // Add subaccount for split payments
+        bearer      // Who bears the transaction charge
+    };
+
     if (method === "momo") {
-        // ✅ Mobile Money via /charge
         const res = await paystack.post("/charge", {
-            email,
-            amount,
-            currency: "GHS",
+            ...basePayload,
             mobile_money: {
                 phone: momo.phone,
-                provider: momo.provider // "mtn", "vodafone", "airteltigo"
-            },
-            metadata
+                provider: momo.provider
+            }
         });
         return res.data;
     } else {
-        // ✅ Card or Bank via /transaction/initialize
         const res = await paystack.post("/transaction/initialize", {
-            email,
-            amount,
-            currency: "GHS",
-            channels: method === "bank" ? ["bank"] : ["card"],
-            metadata
+            ...basePayload,
+            channels: method === "bank" ? ["bank"] : ["card", "bank"]
         });
         return res.data;
     }
 };
 
-// ✅ Verify transaction
 export const verifyPayment = async (reference) => {
     const res = await paystack.get(`/transaction/verify/${reference}`);
+    return res.data;
+};
+
+// ✅ Additional utility for creating transfers to chefs
+export const createTransfer = async ({
+    source = "balance",
+    reason,
+    amount,
+    recipient,
+    reference
+}) => {
+    const res = await paystack.post("/transfer", {
+        source,
+        reason,
+        amount: amount * 100, // Convert to kobo
+        recipient,
+        reference
+    });
+    return res.data;
+};
+
+// ✅ Utility to resolve bank account details
+export const resolveAccount = async (accountNumber, bankCode) => {
+    const res = await paystack.get(`/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`);
+    return res.data;
+};
+
+// Get list of banks for Ghana
+export const getBanks = async () => {
+    const res = await paystack.get("/bank?country=ghana");
+    return res.data;
+};
+
+// Create transfer recipient (for chef payouts)
+export const createTransferRecipient = async ({
+    type,
+    name,
+    account_number,
+    bank_code,
+    currency = "GHS"
+}) => {
+    const res = await paystack.post("/transferrecipient", {
+        type,
+        name,
+        account_number,
+        bank_code,
+        currency
+    });
+    return res.data;
+};
+
+// Verify transfer status
+export const verifyTransfer = async (reference) => {
+    const res = await paystack.get(`/transfer/verify/${reference}`);
     return res.data;
 };

@@ -11,6 +11,8 @@ import adminRouter from "./routes/adminApproval.js";
 import franchiseeRouter from "./routes/franchisee.js";
 import gAuthRouter from "./routes/auth.js";
 import notificationRouter from "./routes/notifications.js";
+import bankRouter from "./utils/bank acc.js";
+import completeProfileRouter from "./routes/completeProfile.js";
 import paystackRouter from "./routes/paystack.js";
 import dotenv from "dotenv";
 
@@ -37,7 +39,8 @@ connectDB();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
-app.set('trust proxy', 1); // Still required for Render.com
+app.set('trust proxy', 1);
+app.use(passport.initialize());
 
 // Initialize Passport WITHOUT sessions
 app.use(passport.initialize());
@@ -51,6 +54,8 @@ app.use(adminRouter);
 app.use(gAuthRouter);
 app.use(franchiseeRouter);
 app.use(notificationRouter);
+app.use(bankRouter);
+app.use(completeProfileRouter);
 app.use("/api/payments", paystackRouter);
 
 // Health check endpoint

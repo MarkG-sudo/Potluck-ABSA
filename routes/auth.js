@@ -7,6 +7,38 @@ dotenv.config();
 
 const gAuthRouter = Router();
 
+
+// Add this to your router for testing purposes only
+gAuthRouter.get("/auth/google/test", (req, res) => {
+    // Simulate what Passport would add to req.user
+    req.user = {
+        _id: "test_user_id_123",
+        email: "test@example.com",
+        isApproved: true,
+        role: "user"
+    };
+
+    // Now call your callback logic manually
+    const token = jwt.sign(
+        {
+            id: req.user._id,
+            role: req.user.role,
+            source: "google"
+        },
+        process.env.JWT_PRIVATE_KEY,
+        {
+            algorithm: "HS256",
+            expiresIn: process.env.JWT_EXPIRES_IN || "24h"
+        }
+    );
+
+    res.json({
+        success: true,
+        token: token,
+        user: req.user
+    });
+});
+
 // 🔗 Step 1: Initiate Google OAuth
 gAuthRouter.get("/auth/google",
     passport.authenticate("google", {
@@ -71,6 +103,7 @@ gAuthRouter.get("/auth/google/callback",
         }
     }
 );
+
 
 export default gAuthRouter;
 

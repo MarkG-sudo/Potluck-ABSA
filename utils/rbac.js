@@ -22,7 +22,9 @@ export const permissions = [
             'chat_with_operator',
             'view_order_history',
             'submit_certification',
-            'receive_payment'
+            'receive_payment',
+            'resolve_account',
+            'get_banks'
         ]
     },
     {

@@ -1,114 +1,38 @@
 import crypto from "crypto";
 import { initiatePayment, verifyPayment } from "../utils/paystack.js";
 import { MealOrder } from "../models/mealOrder.js";
+import { UserModel } from "../models/users.js";
+import { NotificationModel } from "../models/notifications.js";
 import { mailtransporter } from "../utils/mail.js";
-
-// export const paystackWebhook = async (req, res, next) => {
-//     try {
-//         const event = req.body;
-
-//         if (event.event === "charge.success") {
-//             const reference = event.data.reference;
-
-//             // 🔎 Verify with Paystack
-//             const verified = await verifyPayment(reference);
-
-//             if (verified.data.status === "success") {
-//                 const order = await MealOrder.findOne({ "payment.reference": reference })
-//                     .populate("buyer", "firstName lastName email")
-//                     .populate("chef", "firstName lastName email")
-//                     .populate("meal", "mealName price");
-
-//                 if (order) {
-//                     // ✅ Update order as paid
-//                     order.payment.status = "paid";
-//                     order.paidAt = new Date();
-//                     await order.save();
-
-//                     // 🔔 Notify Chef
-//                     await sendUserNotification(order.chef._id, {
-//                         title: "💰 Payment Received",
-//                         body: `Order #${order._id} has been paid by ${order.buyer.firstName}.`,
-//                         url: "/dashboard/orders"
-//                     });
-
-//                     // 🔔 Notify Buyer
-//                     await sendUserNotification(order.buyer._id, {
-//                         title: "✅ Payment Successful",
-//                         body: `Your payment for ${order.quantity}x ${order.meal.mealName} was successful.`,
-//                         url: "/dashboard/my-orders"
-//                     });
-
-//                     // 📧 Email Receipt to Buyer
-//                     await mailtransporter.sendMail({
-//                         from: `"Potluck 🍲" <gidodoom@gmail.com>`,
-//                         to: order.buyer.email,
-//                         subject: "Potluck Payment Receipt",
-//                         html: `
-//                             <h2>Payment Receipt</h2>
-//                             <p>Hi ${order.buyer.firstName},</p>
-//                             <p>Thank you for your order on <b>Potluck</b>!</p>
-//                             <p><b>Order ID:</b> ${order._id}</p>
-//                             <p><b>Meal:</b> ${order.meal.mealName}</p>
-//                             <p><b>Quantity:</b> ${order.quantity}</p>
-//                             <p><b>Total Paid:</b> GHS ${order.totalPrice.toFixed(2)}</p>
-//                             <p><b>Status:</b> Paid ✅</p>
-//                             <br/>
-//                             <p>You can track your order in the Potluck app.</p>
-//                             <p>— Potluck Team 🍲</p>
-//                         `
-//                     });
-
-//                     // 📧 Email Earnings to Chef
-//                     await mailtransporter.sendMail({
-//                         from: `"Potluck 🍲" <gidodoom@gmail.com>`,
-//                         to: order.chef.email,
-//                         subject: "New Order Payment Received",
-//                         html: `
-//                             <h2>Order Payment Confirmed</h2>
-//                             <p>Hi ${order.chef.firstName},</p>
-//                             <p>You’ve just received payment for an order on <b>Potluck</b>!</p>
-//                             <p><b>Order ID:</b> ${order._id}</p>
-//                             <p><b>Meal:</b> ${order.meal.mealName}</p>
-//                             <p><b>Quantity:</b> ${order.quantity}</p>
-//                             <p><b>Total Paid by Buyer:</b> GHS ${order.totalPrice.toFixed(2)}</p>
-//                             <p><b>Commission (15%):</b> GHS ${order.commission.toFixed(2)}</p>
-//                             <p><b>Your Earnings:</b> GHS ${order.vendorEarnings.toFixed(2)}</p>
-//                             <br/>
-//                             <p>Keep cooking and earning with Potluck 🍲</p>
-//                             <p>— Potluck Team</p>
-//                         `
-//                     });
-//                 }
-//             }
-//         }
-
-//         res.sendStatus(200); // ✅ Always 200 for Paystack
-//     } catch (err) {
-//         console.error("Webhook error:", err.message);
-//         res.sendStatus(500);
-//     }
-// };
+import { sendUserNotification } from "../utils/push.js";
 
 export const paystackWebhook = async (req, res, next) => {
-    
-    const rawBody = req.body; // This is a Buffer because of bodyParser.raw()
+    const rawBody = req.body;
     const signature = req.headers['x-paystack-signature'];
 
-    // ✅  Validate the webhook signature
-    const secret = process.env.PAYSTACK_SECRET_KEY; // Use your secret key
+    // ✅ Validate webhook signature
+    const secret = process.env.PAYSTACK_SECRET_KEY;
     const hash = crypto.createHmac('sha512', secret)
-        .update(rawBody) // Use the RAW BODY buffer
+        .update(rawBody)
         .digest('hex');
 
-    // ✅ Compare the signature from Paystack 
     if (hash !== signature) {
         console.error('Invalid webhook signature! Potential fraud.');
-        return res.sendStatus(400); // Do not process fraudulent webhooks
+
+        // 🔔 Notify admin of potential fraud
+        await NotificationModel.create({
+            user: null,
+            title: "⚠️ Security Alert",
+            body: "Potential fraudulent webhook signature detected in Paystack webhook.",
+            url: "/admin/security",
+            type: 'security',
+            priority: 'high'
+        });
+
+        return res.sendStatus(400);
     }
 
-    // ✅  safely parse the raw body into a JSON object
-    const event = JSON.parse(rawBody.toString()); // Convert Buffer to String first
+    const event = JSON.parse(rawBody.toString());
 
     try {
         if (event.event === "charge.success") {
@@ -120,14 +44,20 @@ export const paystackWebhook = async (req, res, next) => {
             if (verified.data.status === "success") {
                 const order = await MealOrder.findOne({ "payment.reference": reference })
                     .populate("buyer", "firstName lastName email")
-                    .populate("chef", "firstName lastName email")
+                    .populate("chef", "firstName lastName email paystack")
                     .populate("meal", "mealName price");
 
-                // ✅ LOGICAL FIX: Check if order is already paid to avoid duplicates
                 if (order && order.payment.status !== "paid") {
                     // ✅ Update order as paid
                     order.payment.status = "paid";
                     order.paidAt = new Date();
+
+                    // ✅ Calculate commission and earnings (15% platform fee)
+                    const commission = order.totalPrice * 0.15;
+                    const vendorEarnings = order.totalPrice - commission;
+                    order.commission = commission;
+                    order.vendorEarnings = vendorEarnings;
+
                     await order.save();
 
                     // 🔔 Notify Chef
@@ -137,6 +67,14 @@ export const paystackWebhook = async (req, res, next) => {
                         url: "/dashboard/orders"
                     });
 
+                    await NotificationModel.create({
+                        user: order.chef._id,
+                        title: "💰 Payment Received",
+                        body: `Order #${order._id} has been paid. Your earnings: GHS ${vendorEarnings.toFixed(2)}`,
+                        url: `/dashboard/orders/${order._id}`,
+                        type: 'payment'
+                    });
+
                     // 🔔 Notify Buyer
                     await sendUserNotification(order.buyer._id, {
                         title: "✅ Payment Successful",
@@ -144,10 +82,26 @@ export const paystackWebhook = async (req, res, next) => {
                         url: "/dashboard/my-orders"
                     });
 
-                    // ... REST OF YOUR EMAIL CODE ...
+                    await NotificationModel.create({
+                        user: order.buyer._id,
+                        title: "✅ Payment Successful",
+                        body: `Payment for ${order.quantity}x ${order.meal.mealName} completed.`,
+                        url: `/dashboard/my-orders/${order._id}`,
+                        type: 'payment'
+                    });
+
+                    // 🔔 Notify Admin of successful payment
+                    await NotificationModel.create({
+                        user: null,
+                        title: "💰 New Payment Received",
+                        body: `Order #${order._id} paid successfully. Amount: GHS ${order.totalPrice.toFixed(2)}, Commission: GHS ${commission.toFixed(2)}`,
+                        url: `/admin/orders/${order._id}`,
+                        type: 'payment'
+                    });
+
                     // 📧 Email Receipt to Buyer
                     await mailtransporter.sendMail({
-                        from: `"Potluck 🍲" <gidodoom@gmail.com>`,
+                        from: `"Potluck 🍲" <${process.env.SMTP_FROM_EMAIL}>`,
                         to: order.buyer.email,
                         subject: "Potluck Payment Receipt",
                         html: `
@@ -167,81 +121,214 @@ export const paystackWebhook = async (req, res, next) => {
 
                     // 📧 Email Earnings to Chef
                     await mailtransporter.sendMail({
-                        from: `"Potluck 🍲" <gidodoom@gmail.com>`,
+                        from: `"Potluck 🍲" <${process.env.SMTP_FROM_EMAIL}>`,
                         to: order.chef.email,
                         subject: "New Order Payment Received",
                         html: `
                             <h2>Order Payment Confirmed</h2>
                             <p>Hi ${order.chef.firstName},</p>
-                            <p>You’ve just received payment for an order on <b>Potluck</b>!</p>
+                            <p>You've just received payment for an order on <b>Potluck</b>!</p>
                             <p><b>Order ID:</b> ${order._id}</p>
                             <p><b>Meal:</b> ${order.meal.mealName}</p>
                             <p><b>Quantity:</b> ${order.quantity}</p>
                             <p><b>Total Paid by Buyer:</b> GHS ${order.totalPrice.toFixed(2)}</p>
-                            <p><b>Commission (15%):</b> GHS ${order.commission.toFixed(2)}</p>
-                            <p><b>Your Earnings:</b> GHS ${order.vendorEarnings.toFixed(2)}</p>
+                            <p><b>Platform Commission (15%):</b> GHS ${commission.toFixed(2)}</p>
+                            <p><b>Your Earnings:</b> GHS ${vendorEarnings.toFixed(2)}</p>
                             <br/>
                             <p>Keep cooking and earning with Potluck 🍲</p>
                             <p>— Potluck Team</p>
                         `
                     });
+
+                    // 📧 Email Admin about the transaction
+                    if (process.env.ADMIN_EMAIL) {
+                        await mailtransporter.sendMail({
+                            from: `"Potluck 🍲" <${process.env.SMTP_FROM_EMAIL}>`,
+                            to: process.env.ADMIN_EMAIL,
+                            subject: "💰 New Payment Processed",
+                            html: `
+                                <h2>Payment Processed Successfully</h2>
+                                <p><b>Order ID:</b> ${order._id}</p>
+                                <p><b>Buyer:</b> ${order.buyer.firstName} ${order.buyer.lastName} (${order.buyer.email})</p>
+                                <p><b>Chef:</b> ${order.chef.firstName} ${order.chef.lastName} (${order.chef.email})</p>
+                                <p><b>Meal:</b> ${order.meal.mealName}</p>
+                                <p><b>Quantity:</b> ${order.quantity}</p>
+                                <p><b>Total Amount:</b> GHS ${order.totalPrice.toFixed(2)}</p>
+                                <p><b>Platform Commission (15%):</b> GHS ${commission.toFixed(2)}</p>
+                                <p><b>Chef Earnings:</b> GHS ${vendorEarnings.toFixed(2)}</p>
+                                <p><b>Payment Reference:</b> ${reference}</p>
+                                <br/>
+                                <p>— Potluck System</p>
+                            `
+                        });
+                    }
                 } else {
                     console.log(`Order with reference ${reference} not found or already paid.`);
                 }
             }
         }
 
-        res.sendStatus(200); // ✅ Always 200 for Paystack
+        // Handle transfer events
+        if (event.event === "transfer.success") {
+            console.log("Transfer to chef successful:", event.data);
+
+            // 🔔 Notify Admin of successful transfer
+            await NotificationModel.create({
+                user: null,
+                title: "✅ Transfer Successful",
+                body: `Transfer ${event.data.reference} to chef completed successfully. Amount: GHS ${(event.data.amount / 100).toFixed(2)}`,
+                url: "/admin/transfers",
+                type: 'transfer'
+            });
+        }
+
+        if (event.event === "transfer.failed") {
+            console.error("Transfer to chef failed:", event.data);
+
+            // 🔔 Notify Admin of failed transfer
+            await NotificationModel.create({
+                user: null,
+                title: "❌ Transfer Failed",
+                body: `Transfer ${event.data.reference} failed. Reason: ${event.data.reason || 'Unknown'}`,
+                url: "/admin/transfers",
+                type: 'transfer',
+                priority: 'high'
+            });
+
+            // 📧 Email admin about failed transfer
+            if (process.env.ADMIN_EMAIL) {
+                await mailtransporter.sendMail({
+                    from: `"Potluck 🍲" <${process.env.SMTP_FROM_EMAIL}>`,
+                    to: process.env.ADMIN_EMAIL,
+                    subject: "❌ Transfer Failed - Action Required",
+                    html: `
+                        <h2>Transfer Failed</h2>
+                        <p><b>Transfer Reference:</b> ${event.data.reference}</p>
+                        <p><b>Amount:</b> GHS ${(event.data.amount / 100).toFixed(2)}</p>
+                        <p><b>Reason:</b> ${event.data.reason || 'Unknown'}</p>
+                        <p><b>Timestamp:</b> ${new Date().toLocaleString()}</p>
+                        <br/>
+                        <p>Please check the Paystack dashboard and take appropriate action.</p>
+                        <p>— Potluck System</p>
+                    `
+                });
+            }
+        }
+
+        res.sendStatus(200);
     } catch (err) {
         console.error("Webhook processing error:", err.message);
+
+        // 🔔 Notify Admin of webhook processing error
+        await NotificationModel.create({
+            user: null,
+            title: "⚠️ Webhook Processing Error",
+            body: `Error processing Paystack webhook: ${err.message}`,
+            url: "/admin/system",
+            type: 'system',
+            priority: 'high'
+        });
+
         res.sendStatus(500);
     }
 };
-// ✅ Controller for POST /api/create-payment
+
 export const createPaymentController = async (req, res, next) => {
     try {
-        const { email, amount, method, momo, orderId } = req.body;
+        const { email, amount, method, momo, orderId, chefId } = req.body;
 
-        
+        // Get chef's subaccount code if available
+        let subaccountCode = null;
+        if (chefId) {
+            const chef = await UserModel.findById(chefId).select("paystack");
+            subaccountCode = chef?.paystack?.subaccountCode;
+        }
+
         const paymentData = await initiatePayment({
             email,
-            amount,
-            method, // e.g., "card", "momo"
-            momo,   // { phone, provider } if method is "momo"
-            metadata: { orderId } //  Paystack ref to your order
+            amount: amount * 100, // Convert to kobo
+            method,
+            momo,
+            metadata: {
+                orderId,
+                chefId
+            },
+            subaccount: subaccountCode,
+            bearer: "subaccount"
         });
 
-        // Send the payment authorization URL back to the PWA
+        // 🔔 Notify Admin of payment initiation
+        await NotificationModel.create({
+            user: null,
+            title: "🔄 Payment Initiated",
+            body: `New payment initiated for order ${orderId}. Amount: GHS ${amount.toFixed(2)}`,
+            url: `/admin/orders/${orderId}`,
+            type: 'payment'
+        });
+
         res.json({
             authorization_url: paymentData.data.authorization_url,
-            reference: paymentData.data.reference
+            reference: paymentData.data.reference,
+            access_code: paymentData.data.access_code
         });
 
     } catch (error) {
         console.error("Create Payment Error:", error);
+
+        // 🔔 Notify Admin of payment initiation failure
+        await NotificationModel.create({
+            user: null,
+            title: "❌ Payment Initiation Failed",
+            body: `Failed to initiate payment for order ${req.body.orderId}. Error: ${error.message}`,
+            url: "/admin/payments",
+            type: 'payment',
+            priority: 'high'
+        });
+
         next(error);
     }
 };
 
-// ✅ Controller for GET /api/verify-payment/:reference
 export const verifyPaymentController = async (req, res, next) => {
     try {
         const { reference } = req.params;
 
-        // Use the function from your first code block
         const verification = await verifyPayment(reference);
 
-        // Check the status from Paystack's API
         if (verification.data.status === 'success') {
-            // You can optionally update the order status here too,
-            // but the webhook is the primary handler for this.
+            // Optional: Update order status here for immediate feedback
+            await MealOrder.findOneAndUpdate(
+                { "payment.reference": reference },
+                {
+                    "payment.status": "verified",
+                    verifiedAt: new Date()
+                }
+            );
+
+            // 🔔 Notify Admin of manual verification
+            await NotificationModel.create({
+                user: null,
+                title: "✅ Payment Manually Verified",
+                body: `Payment ${reference} was manually verified successfully.`,
+                url: "/admin/payments",
+                type: 'payment'
+            });
+
             res.json({
                 status: true,
                 message: "Payment verified successfully",
                 data: verification.data
             });
         } else {
-            // Payment failed or is pending
+            // 🔔 Notify Admin of failed manual verification
+            await NotificationModel.create({
+                user: null,
+                title: "❌ Payment Verification Failed",
+                body: `Manual verification failed for payment ${reference}. Status: ${verification.data.status}`,
+                url: "/admin/payments",
+                type: 'payment'
+            });
+
             res.json({
                 status: false,
                 message: "Payment not successful",
@@ -251,6 +338,17 @@ export const verifyPaymentController = async (req, res, next) => {
 
     } catch (error) {
         console.error("Verify Payment Error:", error);
+
+        // 🔔 Notify Admin of verification error
+        await NotificationModel.create({
+            user: null,
+            title: "⚠️ Payment Verification Error",
+            body: `Error verifying payment ${req.params.reference}: ${error.message}`,
+            url: "/admin/payments",
+            type: 'payment',
+            priority: 'high'
+        });
+
         next(error);
     }
 };

@@ -1,11 +1,15 @@
 
 import { Router } from "express";
-import { isAuthenticated } from "../middlewares/auth.js";
-import { updateGoogleUserProfile } from "../completeProfile.js";
+import { isAuthenticated, allowTempAuth } from "../middlewares/auth.js";
+import { completeUserProfile, getProfileCompletionStatus } from "../controllers/completeprofile.js";
+import { isAdmin } from "../middlewares/isAdmin.js";
 
 const completeProfileRouter = Router();
 
 // POST /auth/complete-profile
-completeProfileRouter.post("/auth/complete-profile", isAuthenticated, updateGoogleUserProfile);
+completeProfileRouter.post("/complete-profile", isAuthenticated, allowTempAuth, completeUserProfile);
+
+completeProfileRouter.get("/complete-profile/status", isAuthenticated, isAdmin, getProfileCompletionStatus);
+
 
 export default completeProfileRouter;

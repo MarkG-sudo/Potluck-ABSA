@@ -4,7 +4,6 @@ const totalRevenue = await MealOrder.aggregate([
 ]);
 console.log("💰 Total Platform Revenue:", totalRevenue[0]?.total || 0);
 
-
 const monthlyRevenue = await MealOrder.aggregate([
     {
         $group: {
