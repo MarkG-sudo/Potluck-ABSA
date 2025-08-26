@@ -46,7 +46,7 @@ const mealOrderSchema = new Schema(
         platformEarnings: { type: Number, min: 0 }, // commission stored for platform reporting ✅
         
         payment: {
-            method: { type: String, enum: ["paystack", "momo", "bank", "cash"], required: true },
+            method: { type: String, enum: ["card", "momo", "bank", "cash"], required: true },
             status: { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
             reference: { type: String }
         },

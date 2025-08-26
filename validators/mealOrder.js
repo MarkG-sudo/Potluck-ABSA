@@ -38,7 +38,7 @@ export const createOrderValidator = Joi.object({
             "date.tooLate": "Pickup time cannot be more than {#limit} minutes from now" // New error message
         }),
     notes: Joi.string().max(300).optional().allow("").label("Notes"),
-    paymentMethod: Joi.string().valid("paystack", "momo", "bank", "cash").required(),
+    paymentMethod: Joi.string().valid("card", "momo", "bank", "cash").required(),
     // ✅ Only required if paymentMethod === "momo"
     momo: Joi.when("paymentMethod", {
         is: "momo",
