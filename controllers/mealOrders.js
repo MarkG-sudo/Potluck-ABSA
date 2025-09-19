@@ -10,13 +10,7 @@ import mongoose from "mongoose";
 
 
 // POtlucky
-import crypto from "crypto";
-import { Meal } from "../models/Meal.js";
-import { MealOrder } from "../models/MealOrder.js";
-import { NotificationModel } from "../models/Notification.js";
-import { initiatePayment } from "../utils/paystack.js";
-import { sendUserNotification } from "../utils/notifications.js";
-import { createOrderValidator } from "../validators/orderValidator.js";
+
 
 // Helper: generate unique Paystack reference
 const generateReference = (prefix = "ORD") => {
