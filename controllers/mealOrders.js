@@ -1,20 +1,13 @@
 import axios from "axios";
 import { Meal } from "../models/meals.js";
 import { MealOrder } from "../models/mealOrder.js";
-import { createOrderValidator, orderQueryValidator } from "../validators/mealOrder.js";
-import { initiatePayment } from "../utils/paystack.js"; // 
+import { createOrderValidator } from "../validators/mealOrder.js";
+import { initiatePayment } from "../utils/paystack.js";
 import { sendUserNotification } from "../utils/push.js";
 import { NotificationModel } from "../models/notifications.js";
-import mongoose from "mongoose";
 import crypto from "crypto";
 
-
-
-
-// POtlucky
-
-
-// Helper: generate unique Paystack reference
+// 🔑 Helper: generate unique Paystack reference
 const generateReference = (prefix = "ORD") => {
     return `${prefix}_${crypto.randomBytes(8).toString("hex")}_${Date.now()}`;
 };
@@ -24,7 +17,9 @@ export const placeOrder = async (req, res, next) => {
         // ✅ Validate request body
         const { error, value } = createOrderValidator.validate(req.body);
         if (error) {
-            return res.status(422).json({ error: error.details.map(d => d.message) });
+            return res
+                .status(422)
+                .json({ error: error.details.map((d) => d.message) });
         }
 
         const { meal, quantity, pickupTime, notes, paymentMethod, momo } = value;
@@ -44,10 +39,8 @@ export const placeOrder = async (req, res, next) => {
         const mealPrice = mealDoc.price * quantity;
         const commission = mealPrice * 0.15;
         const vendorEarnings = mealPrice - commission;
-        const chef = mealDoc.createdBy._id;
 
-        // ✅ Generate unique payment reference (before hitting Paystack)
-        const paymentReference = generateReference("ORD");
+        const chef = mealDoc.createdBy._id;
 
         // ✅ Create order first (status pending)
         const newOrder = await MealOrder.create({
@@ -61,11 +54,7 @@ export const placeOrder = async (req, res, next) => {
             vendorEarnings,
             platformEarnings: commission,
             notes,
-            payment: {
-                method: paymentMethod,
-                status: "pending",
-                reference: paymentReference
-            }
+            payment: { method: paymentMethod, status: "pending" },
         });
 
         let paystackResponse = null;
@@ -73,28 +62,25 @@ export const placeOrder = async (req, res, next) => {
         // ✅ Handle online payments
         if (paymentMethod !== "cash") {
             try {
-                const customerEmail = req.auth.email || `${req.auth.id}@yourapp.com`; // fallback
-
                 paystackResponse = await initiatePayment({
-                    email: customerEmail,
-                    amount: mealPrice * 100,
-                    reference: paymentReference, // 🔑 use our generated reference
+                    email: req.auth.email,
+                    amount: mealPrice, // NOTE: initiatePayment util should handle *100
                     metadata: {
                         orderId: newOrder._id.toString(),
                         buyerId: req.auth.id,
                         chefId: chef,
-                        paymentMethod
+                        paymentMethod,
                     },
-                    momo
+                    method: paymentMethod, // "momo" | "bank" | "card"
+                    momo,
                 });
 
-                // Save reference in case Paystack overrides it
-                newOrder.payment.reference = paystackResponse.data.reference;
+                newOrder.payment.reference = paystackResponse.reference;
                 await newOrder.save();
             } catch (err) {
                 return res.status(500).json({
                     error: "Payment initialization failed",
-                    details: err.message
+                    details: err.message,
                 });
             }
         }
@@ -105,31 +91,31 @@ export const placeOrder = async (req, res, next) => {
             .populate("chef", "firstName lastName email")
             .populate("meal", "mealName price");
 
-        // 🔔 1. Send PUSH notification to chef
+        // 🔔 Notify chef immediately
         await sendUserNotification(chef, {
-            title: "🍽️ New Order Received",
+            title: "🍽 New Order Received",
             body: `A customer just ordered ${quantity}x ${mealDoc.mealName}.`,
-            url: "/dashboard/orders"
+            url: "/dashboard/orders",
         });
 
-        // 📬 2. Save NOTIFICATION to database
         await NotificationModel.create({
             user: chef,
-            title: "🍽️ New Order",
+            title: "🍽 New Order",
             body: `You have a new order for ${quantity}x ${mealDoc.mealName}.`,
             url: `/dashboard/orders/${newOrder._id}`,
-            type: "order"
+            type: "order",
         });
 
         res.status(201).json({
             message: "Order placed successfully",
             order: populatedOrder,
-            payment: paystackResponse ? paystackResponse.data : null
+            payment: paystackResponse,
         });
     } catch (err) {
         next(err);
     }
 };
+
 
 // export const placeOrder = async (req, res, next) => {
 //     try {

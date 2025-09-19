@@ -116,88 +116,102 @@ import { sendUserNotification } from "../utils/push.js";
 // };
 
 export const paystackWebhook = async (req, res, next) => {
-    const rawBody = req.body;
-    const signature = req.headers['x-paystack-signature'];
-
-    // ✅ Validate webhook signature
-    const secret = process.env.PAYSTACK_SECRET_KEY;
-    const hash = crypto.createHmac('sha512', secret)
-        .update(rawBody)
-        .digest('hex');
-
-    if (hash !== signature) {
-        console.error('Invalid webhook signature! Potential fraud.');
-        await NotificationModel.create({
-            user: null,
-            title: "⚠️ Security Alert",
-            body: "Potential fraudulent webhook signature detected in Paystack webhook.",
-            url: "/admin/security",
-            type: 'security',
-            priority: 'high'
-        });
-        return res.sendStatus(400);
-    }
-
-    const event = JSON.parse(rawBody.toString());
-
     try {
+        // ⚠️ Use rawBody (string/buffer) for signature validation
+        const rawBody = req.rawBody || JSON.stringify(req.body);
+        const signature = req.headers["x-paystack-signature"];
+
+        // ✅ Validate webhook signature
+        const secret = process.env.PAYSTACK_SECRET_KEY;
+        const hash = crypto.createHmac("sha512", secret).update(rawBody).digest("hex");
+
+        if (hash !== signature) {
+            console.error("❌ Invalid webhook signature! Potential fraud.");
+            await NotificationModel.create({
+                user: null,
+                title: "⚠ Security Alert",
+                body: "Potential fraudulent webhook signature detected in Paystack webhook.",
+                url: "/admin/security",
+                type: "security",
+                priority: "high",
+            });
+            return res.sendStatus(400);
+        }
+
+        // ✅ Parse webhook event
+        const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
+
+        // 🔹 Handle successful charge
         if (event.event === "charge.success") {
             const reference = event.data.reference;
 
-            // 🔎 Verify with Paystack
+            // 🔎 Verify with Paystack API
             const verified = await verifyPayment(reference);
 
-            if (verified.data.status === "success") {
+            if (verified.status === "success") {
                 const order = await MealOrder.findOne({ "payment.reference": reference })
                     .populate("buyer", "firstName lastName email")
                     .populate("chef", "firstName lastName email paystack")
                     .populate("meal", "mealName price");
 
                 if (order && order.payment.status !== "paid") {
-                    // ✅ Double-check amount matches
-                    if (verified.data.amount !== order.totalPrice * 100) {
-                        console.error(`⚠️ Payment amount mismatch for order ${order._id}`);
+                    // ✅ Double-check amount
+                    if (verified.amount !== order.totalPrice * 100) {
+                        console.error(`⚠ Payment amount mismatch for order ${order._id}`);
                         await NotificationModel.create({
                             user: null,
-                            title: "⚠️ Payment Mismatch",
-                            body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice}, got ${verified.data.amount / 100}`,
+                            title: "⚠ Payment Mismatch",
+                            body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice}, got ${verified.amount / 100}`,
                             url: `/admin/orders/${order._id}`,
-                            type: 'payment',
-                            priority: 'high'
+                            type: "payment",
+                            priority: "high",
                         });
                         return res.sendStatus(400);
                     }
 
-                    // ✅ Update order with verified payment details
+                    // ✅ Double-check email
+                    if (verified.customer.email !== order.buyer.email) {
+                        console.error(`⚠ Email mismatch for order ${order._id}. Paystack: ${verified.customer.email}, Expected: ${order.buyer.email}`);
+                        await NotificationModel.create({
+                            user: null,
+                            title: "⚠ Payment Email Mismatch",
+                            body: `Reference ${reference} email mismatch. Paystack: ${verified.customer.email}, Expected: ${order.buyer.email}`,
+                            url: `/admin/orders/${order._id}`,
+                            type: "payment",
+                            priority: "high",
+                        });
+                        return res.sendStatus(400);
+                    }
+
+                    // ✅ Update order
                     order.payment.status = "paid";
                     order.payment.reference = reference;
-                    order.payment.transactionId = verified.data.id;       // Paystack transaction ID
-                    order.payment.channel = verified.data.channel;        // e.g., "bank", "card", "mobile_money"
+                    order.payment.transactionId = verified.id; // Paystack transaction ID
+                    order.payment.channel = verified.channel;  // e.g., "bank", "card", "mobile_money"
                     order.paidAt = new Date();
 
-                    // ✅ Commission + earnings
+                    // ✅ Commission + vendor earnings
                     const commission = order.totalPrice * 0.15;
-                    const vendorEarnings = order.totalPrice - commission;
                     order.commission = commission;
-                    order.vendorEarnings = vendorEarnings;
+                    order.vendorEarnings = order.totalPrice - commission;
 
                     await order.save();
 
-                    // ... 🔔 Notifications + emails (same as before) ...
+                    // TODO: 🔔 Trigger vendor payout logic here if needed
                 } else {
-                    console.log(`Order with reference ${reference} not found or already paid.`);
+                    console.log(`ℹ Order with reference ${reference} not found or already paid.`);
                 }
             }
         }
 
-        // ✅ Handle transfer events (unchanged)
+        // 🔹 Handle transfer events
         if (event.event === "transfer.success") {
             await NotificationModel.create({
                 user: null,
                 title: "✅ Transfer Successful",
                 body: `Transfer ${event.data.reference} to chef completed. Amount: GHS ${(event.data.amount / 100).toFixed(2)}`,
                 url: "/admin/transfers",
-                type: 'transfer'
+                type: "transfer",
             });
         }
 
@@ -205,10 +219,10 @@ export const paystackWebhook = async (req, res, next) => {
             await NotificationModel.create({
                 user: null,
                 title: "❌ Transfer Failed",
-                body: `Transfer ${event.data.reference} failed. Reason: ${event.data.reason || 'Unknown'}`,
+                body: `Transfer ${event.data.reference} failed. Reason: ${event.data.reason || "Unknown"}`,
                 url: "/admin/transfers",
-                type: 'transfer',
-                priority: 'high'
+                type: "transfer",
+                priority: "high",
             });
         }
 
@@ -217,15 +231,16 @@ export const paystackWebhook = async (req, res, next) => {
         console.error("Webhook processing error:", err.message);
         await NotificationModel.create({
             user: null,
-            title: "⚠️ Webhook Processing Error",
+            title: "⚠ Webhook Processing Error",
             body: `Error processing Paystack webhook: ${err.message}`,
             url: "/admin/system",
-            type: 'system',
-            priority: 'high'
+            type: "system",
+            priority: "high",
         });
         res.sendStatus(500);
     }
 };
+
 
 // export const createPaymentController = async (req, res, next) => {
 //     try {
