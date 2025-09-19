@@ -10,6 +10,18 @@ import mongoose from "mongoose";
 
 
 // POtlucky
+import crypto from "crypto";
+import { Meal } from "../models/Meal.js";
+import { MealOrder } from "../models/MealOrder.js";
+import { NotificationModel } from "../models/Notification.js";
+import { initiatePayment } from "../utils/paystack.js";
+import { sendUserNotification } from "../utils/notifications.js";
+import { createOrderValidator } from "../validators/orderValidator.js";
+
+// Helper: generate unique Paystack reference
+const generateReference = (prefix = "ORD") => {
+    return `${prefix}_${crypto.randomBytes(8).toString("hex")}_${Date.now()}`;
+};
 
 export const placeOrder = async (req, res, next) => {
     try {
@@ -36,10 +48,12 @@ export const placeOrder = async (req, res, next) => {
         const mealPrice = mealDoc.price * quantity;
         const commission = mealPrice * 0.15;
         const vendorEarnings = mealPrice - commission;
-
         const chef = mealDoc.createdBy._id;
 
-        // ✅ Create order first
+        // ✅ Generate unique payment reference (before hitting Paystack)
+        const paymentReference = generateReference("ORD");
+
+        // ✅ Create order first (status pending)
         const newOrder = await MealOrder.create({
             meal,
             buyer: req.auth.id,
@@ -49,9 +63,13 @@ export const placeOrder = async (req, res, next) => {
             totalPrice: mealPrice,
             commission,
             vendorEarnings,
-            platformEarnings: commission,  // ✅ store it directly
+            platformEarnings: commission,
             notes,
-            payment: { method: paymentMethod, status: "pending" }
+            payment: {
+                method: paymentMethod,
+                status: "pending",
+                reference: paymentReference
+            }
         });
 
         let paystackResponse = null;
@@ -59,43 +77,52 @@ export const placeOrder = async (req, res, next) => {
         // ✅ Handle online payments
         if (paymentMethod !== "cash") {
             try {
+                const customerEmail = req.auth.email || `${req.auth.id}@yourapp.com`; // fallback
+
                 paystackResponse = await initiatePayment({
-                    email: req.auth.email,
+                    email: customerEmail,
                     amount: mealPrice * 100,
+                    reference: paymentReference, // 🔑 use our generated reference
                     metadata: {
                         orderId: newOrder._id.toString(),
                         buyerId: req.auth.id,
                         chefId: chef,
                         paymentMethod
                     },
-                    method: paymentMethod, // "momo" | "bank" | "paystack"
                     momo
                 });
 
+                // Save reference in case Paystack overrides it
                 newOrder.payment.reference = paystackResponse.data.reference;
                 await newOrder.save();
             } catch (err) {
-                return res.status(500).json({ error: "Payment initialization failed", details: err.message });
+                return res.status(500).json({
+                    error: "Payment initialization failed",
+                    details: err.message
+                });
             }
         }
 
         // ✅ Auto-populate meal, chef, buyer
-        const populatedOrder = await MealOrder.findById(newOrder._id);
+        const populatedOrder = await MealOrder.findById(newOrder._id)
+            .populate("buyer", "firstName lastName email")
+            .populate("chef", "firstName lastName email")
+            .populate("meal", "mealName price");
 
-        // 🔔 1. Send PUSH notification to chef (for immediate alert)
+        // 🔔 1. Send PUSH notification to chef
         await sendUserNotification(chef, {
             title: "🍽️ New Order Received",
             body: `A customer just ordered ${quantity}x ${mealDoc.mealName}.`,
             url: "/dashboard/orders"
         });
 
-        // 📬 2. Save NOTIFICATION to database (for the chef's bell icon inbox)
+        // 📬 2. Save NOTIFICATION to database
         await NotificationModel.create({
-            user: chef, // The chef will see this in their notification list
+            user: chef,
             title: "🍽️ New Order",
             body: `You have a new order for ${quantity}x ${mealDoc.mealName}.`,
-            url: `/dashboard/orders/${newOrder._id}`, // Deep link to the order in chef's dashboard
-            type: 'order'
+            url: `/dashboard/orders/${newOrder._id}`,
+            type: "order"
         });
 
         res.status(201).json({
