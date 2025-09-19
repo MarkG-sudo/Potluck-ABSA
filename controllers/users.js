@@ -13,6 +13,227 @@ const __dirname = path.dirname(__filename);
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "hello@potluck.africa";
 
+// export const registerUser = async (req, res) => {
+//     try {
+//         // ✅ Validate input
+//         const { error, value } = registerUserValidator.validate(req.body);
+//         if (error) {
+//             return res.status(422).json({ error: error.details.map(d => d.message) });
+//         }
+
+//         const { firstName, lastName, email, phone, password, role, payoutDetails, source = "local" } = value;
+
+//         const userExists = await UserModel.findOne({ email });
+//         if (userExists) {
+//             return res.status(400).json({ message: "Email already in use" });
+//         }
+
+//         const hashedPassword = await bcrypt.hash(password, 10);
+
+//         // Determine status based on role - potlucky auto-approved, potchef pending
+//         const status = role === "potlucky" ? "active" : "pending";
+//         const profileCompleted = role === "potlucky"; // Basic completion for potlucky
+
+//         let paystackSubaccount = null;
+
+//         // ✅ If registering as a Potchef → Create Paystack Subaccount
+//         if (role === "potchef" && payoutDetails?.type === "bank") {
+//             try {
+//                 const subRes = await axios.post(
+//                     "https://api.paystack.co/subaccount",
+//                     {
+//                         business_name: `${firstName} ${lastName}`,
+//                         settlement_bank: payoutDetails.bank.bankCode,
+//                         account_number: payoutDetails.bank.accountNumber,
+//                         percentage_charge: 15,
+//                         currency: "GHS"
+//                     },
+//                     { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+//                 );
+
+//                 paystackSubaccount = subRes.data.data.subaccount_code;
+//             } catch (paystackError) {
+//                 console.error("Paystack subaccount creation failed:", paystackError.response?.data);
+//                 // Still create user but mark as incomplete
+//             }
+//         }
+//         // ✅ Save user with new schema structure
+//         const user = await UserModel.create({
+//             firstName,
+//             lastName,
+//             email,
+//             phone,
+//             password: hashedPassword,
+//             role,
+//             status: role === "potchef" ? "pending" : "active",
+//             profileCompleted: role === "potchef" ? false : true, // Potchef not complete without payout
+//             payoutDetails: payoutDetails || null, // Optional
+//             paystack: paystackSubaccount ? { subaccountCode: paystackSubaccount } : undefined,
+//             source
+//         });
+
+//         // ✅ Send email to user
+//         const userTemplatePath = path.join(
+//             __dirname,
+//             `../utils/${role === "potlucky" ? "signup-mail.html" : "pending-approval-mail.html"}`
+//         );
+
+//         if (fs.existsSync(userTemplatePath)) {
+//             let userEmailHTML = fs.readFileSync(userTemplatePath, "utf-8");
+//             userEmailHTML = userEmailHTML.replace(/{{firstName}}/g, firstName);
+
+//             await mailtransporter.sendMail({
+//                 from: '"Potluck" <no-reply@potluck.app>',
+//                 to: email,
+//                 subject: role === "potlucky"
+//                     ? "Welcome to Potluck 🎉"
+//                     : "Potluck Registration Received - Pending Approval",
+//                 html: userEmailHTML,
+//             });
+//         }
+
+//         // ✅ Notify Admin if potchef registration
+//         if (role === "potchef" && process.env.ADMIN_EMAIL) {
+//             const adminTemplatePath = path.join(
+//                 __dirname,
+//                 "../utils/notify-admin-on-user-register.html"
+//             );
+
+//             if (fs.existsSync(adminTemplatePath)) {
+//                 let adminEmailHTML = fs.readFileSync(adminTemplatePath, "utf-8");
+//                 adminEmailHTML = adminEmailHTML
+//                     .replace(/{{firstName}}/g, firstName)
+//                     .replace(/{{lastName}}/g, lastName)
+//                     .replace(/{{email}}/g, email)
+//                     .replace(/{{phone}}/g, phone || "Not Provided")
+//                     .replace(/{{role}}/g, role);
+
+//                 await mailtransporter.sendMail({
+//                     from: '"Potluck Notifications" <no-reply@potluck.app>',
+//                     to: ADMIN_EMAIL,
+//                     subject: `New ${role} account pending approval`,
+//                     html: adminEmailHTML,
+//                 });
+//             }
+//         }
+
+//                const tempToken = jwt.sign(
+//             { id: user._id, temp: true }, 
+//             process.env.JWT_PRIVATE_KEY,
+//             { expiresIn: '1h' } // Short-lived token
+//         );
+
+//         res.status(201).json({
+//             message: "User registered successfully",
+//             user: { ...user.toObject(), password: undefined },
+//             tempToken // Send temporary token for profile completion
+//         });
+//     } catch (err) {
+//         console.error("Registration error:", err.response?.data || err.message);
+//         res.status(500).json({ message: "Server error", error: err.message });
+//     }
+// };
+
+// export const signInUser = async (req, res, next) => {
+//     try {
+//         const { error, value } = loginUserValidator.validate(req.body);
+//         if (error) {
+//             return res.status(422).json({ error: error.details.map(d => d.message) });
+//         }
+
+//         const user = await UserModel.findOne({ email: value.email });
+//         if (!user) {
+//             return res.status(404).json({ error: "Account does not exist!" });
+//         }
+
+//         // ✅ Handle Google auth users trying to use password login
+//         if (user.source === "google") {
+//             return res.status(403).json({
+//                 error: "This account uses Google Sign-In. Please use Google to log in."
+//             });
+//         }
+
+//         // ✅ Validate password for local users
+//         if (!user.password) {
+//             return res.status(401).json({ error: "Invalid credentials!" });
+//         }
+
+//         const isPasswordCorrect = await bcrypt.compare(value.password, user.password);
+//         if (!isPasswordCorrect) {
+//             return res.status(401).json({ error: "Invalid credentials!" });
+//         }
+
+//         // ✅ Check approval status using new status field
+//         if (user.role === "potchef" && user.status !== "approved") {
+//             return res.status(403).json({
+//                 error: "Your account is pending approval. Please wait for admin verification."
+//             });
+//         }
+
+//         // ✅ Update last login info
+//         user.lastLogin = new Date();
+//         user.loginCount = (user.loginCount || 0) + 1;
+//         await user.save();
+
+//         // ✅ Generate JWT token
+//         const token = jwt.sign(
+//             { id: user._id, role: user.role },
+//             process.env.JWT_PRIVATE_KEY,
+//             { algorithm: "HS256", expiresIn: "24h" }
+//         );
+
+//         res.json({
+//             message: "Sign In Successful!",
+//             accessToken: token,
+//             role: user.role,
+//             name: user.firstName,
+//             userId: user._id
+//         });
+//     } catch (error) {
+//         next(error);
+//     }
+// };
+
+// export const googleAuthSuccess = async (req, res) => {
+//     try {
+//         if (!req.user) {
+//             return res.status(401).json({ error: "Google authentication failed" });
+//         }
+
+//         const user = req.user;
+
+//         // Check if potchef is approved before allowing login
+//         if (user.role === "potchef" && user.status !== "approved") {
+//             return res.status(403).json({
+//                 error: "Your chef account is pending approval. Please wait for admin verification."
+//             });
+//         }
+
+//         // Update last login info
+//         user.lastLogin = new Date();
+//         user.loginCount = (user.loginCount || 0) + 1;
+//         await user.save();
+
+//         // Generate JWT token for Google-authenticated users
+//         const token = jwt.sign(
+//             { id: user._id, role: user.role },
+//             process.env.JWT_PRIVATE_KEY,
+//             { algorithm: "HS256", expiresIn: "24h" }
+//         );
+
+//         res.json({
+//             message: "Google authentication successful!",
+//             accessToken: token,
+//             role: user.role,
+//             name: user.firstName,
+//             userId: user._id
+//         });
+
+//     } catch (error) {
+//         res.status(500).json({ error: error.message });
+//     }
+// };
+
 export const registerUser = async (req, res) => {
     try {
         // ✅ Validate input
@@ -28,7 +249,8 @@ export const registerUser = async (req, res) => {
             return res.status(400).json({ message: "Email already in use" });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // ✅ Only hash password if present (fix for Google users)
+        const hashedPassword = password ? await bcrypt.hash(password, 10) : undefined;
 
         // Determine status based on role - potlucky auto-approved, potchef pending
         const status = role === "potlucky" ? "active" : "pending";
@@ -37,15 +259,15 @@ export const registerUser = async (req, res) => {
         let paystackSubaccount = null;
 
         // ✅ If registering as a Potchef → Create Paystack Subaccount
-        if (role === "potchef" && payoutDetails) {
+        if (role === "potchef" && payoutDetails?.type === "bank") {
             try {
                 const subRes = await axios.post(
                     "https://api.paystack.co/subaccount",
                     {
                         business_name: `${firstName} ${lastName}`,
-                        settlement_bank: payoutDetails.bank?.bankCode || payoutDetails.mobileMoney?.provider,
-                        account_number: payoutDetails.bank?.accountNumber || payoutDetails.mobileMoney?.number,
-                        percentage_charge: 15, // Potluck takes 15%
+                        settlement_bank: payoutDetails.bank.bankCode,
+                        account_number: payoutDetails.bank.accountNumber,
+                        percentage_charge: 15,
                         currency: "GHS"
                     },
                     { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
@@ -54,7 +276,9 @@ export const registerUser = async (req, res) => {
                 paystackSubaccount = subRes.data.data.subaccount_code;
             } catch (paystackError) {
                 console.error("Paystack subaccount creation failed:", paystackError.response?.data);
-                // Continue user creation even if Paystack fails
+
+                // Optional: persist error reason for admin review
+                // payoutDetailsError field can be added to schema if needed
             }
         }
 
@@ -64,11 +288,11 @@ export const registerUser = async (req, res) => {
             lastName,
             email,
             phone,
-            password: hashedPassword,
+            ...(hashedPassword ? { password: hashedPassword } : {}), // only set if defined
             role,
-            status: role === "potchef" ? "pending" : "active",
-            profileCompleted: role === "potchef" ? false : true, // Potchef not complete without payout
-            payoutDetails: payoutDetails || null, // Optional
+            status,
+            profileCompleted,
+            payoutDetails: payoutDetails || null,
             paystack: paystackSubaccount ? { subaccountCode: paystackSubaccount } : undefined,
             source
         });
@@ -81,7 +305,9 @@ export const registerUser = async (req, res) => {
 
         if (fs.existsSync(userTemplatePath)) {
             let userEmailHTML = fs.readFileSync(userTemplatePath, "utf-8");
-            userEmailHTML = userEmailHTML.replace(/{{firstName}}/g, firstName);
+
+            // sanitize / replace placeholder
+            userEmailHTML = userEmailHTML.replace(/{{firstName}}/g, firstName || "");
 
             await mailtransporter.sendMail({
                 from: '"Potluck" <no-reply@potluck.app>',
@@ -103,8 +329,8 @@ export const registerUser = async (req, res) => {
             if (fs.existsSync(adminTemplatePath)) {
                 let adminEmailHTML = fs.readFileSync(adminTemplatePath, "utf-8");
                 adminEmailHTML = adminEmailHTML
-                    .replace(/{{firstName}}/g, firstName)
-                    .replace(/{{lastName}}/g, lastName)
+                    .replace(/{{firstName}}/g, firstName || "")
+                    .replace(/{{lastName}}/g, lastName || "")
                     .replace(/{{email}}/g, email)
                     .replace(/{{phone}}/g, phone || "Not Provided")
                     .replace(/{{role}}/g, role);
@@ -118,16 +344,17 @@ export const registerUser = async (req, res) => {
             }
         }
 
-               const tempToken = jwt.sign(
-            { id: user._id, temp: true }, 
+        // ✅ Temp token for profile completion
+        const tempToken = jwt.sign(
+            { id: user._id, temp: true },
             process.env.JWT_PRIVATE_KEY,
-            { expiresIn: '1h' } // Short-lived token
+            { expiresIn: '1h' }
         );
 
         res.status(201).json({
             message: "User registered successfully",
             user: { ...user.toObject(), password: undefined },
-            tempToken // Send temporary token for profile completion
+            tempToken
         });
     } catch (err) {
         console.error("Registration error:", err.response?.data || err.message);
@@ -150,7 +377,7 @@ export const signInUser = async (req, res, next) => {
         // ✅ Handle Google auth users trying to use password login
         if (user.source === "google") {
             return res.status(403).json({
-                error: "This account uses Google Sign-In. Please use Google to log in."
+                error: "This account was created via Google Sign-In. Please use Google login or set a password via profile completion."
             });
         }
 
@@ -203,19 +430,19 @@ export const googleAuthSuccess = async (req, res) => {
 
         const user = req.user;
 
-        // Check if potchef is approved before allowing login
+        // ✅ Check if potchef is approved before allowing login
         if (user.role === "potchef" && user.status !== "approved") {
             return res.status(403).json({
                 error: "Your chef account is pending approval. Please wait for admin verification."
             });
         }
 
-        // Update last login info
+        // ✅ Update last login info
         user.lastLogin = new Date();
         user.loginCount = (user.loginCount || 0) + 1;
         await user.save();
 
-        // Generate JWT token for Google-authenticated users
+        // ✅ Generate JWT token for Google-authenticated users
         const token = jwt.sign(
             { id: user._id, role: user.role },
             process.env.JWT_PRIVATE_KEY,

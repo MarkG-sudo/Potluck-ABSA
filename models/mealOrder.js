@@ -48,7 +48,9 @@ const mealOrderSchema = new Schema(
         payment: {
             method: { type: String, enum: ["card", "momo", "bank", "cash"], required: true },
             status: { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
-            reference: { type: String }
+            reference: { type: String },
+            transactionId: { type: String },   // 🔹 Paystack transaction ID
+            channel: { type: String },         // 🔹 "card", "bank", "mobile_money"
         },
 
         acceptedAt: { type: Date, default: null },
