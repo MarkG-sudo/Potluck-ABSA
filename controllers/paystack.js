@@ -208,33 +208,30 @@ export const createPaymentController = async (req, res, next) => {
 
         console.log("💡 Paystack initiate response:", JSON.stringify(paymentResponse, null, 2));
 
-        // Safe check for payment response
-        if (!paymentResponse?.data?.reference) {
+        // Check for valid response
+        if (!paymentResponse?.data?.reference || !paymentResponse?.data?.authorization_url) {
             console.error("❌ Paystack initiate returned invalid response!", paymentResponse);
             return res.status(500).json({ message: "Payment initiation failed" });
         }
 
         const reference = paymentResponse.data.reference;
+        const authorizationUrl = paymentResponse.data.authorization_url;
 
-        // Save payment reference safely
+        // Save payment reference in order
         mealOrder.payment = mealOrder.payment || {};
         mealOrder.payment.method = method;
         mealOrder.payment.status = "pending";
         mealOrder.payment.reference = reference;
 
-        // 🔍 DEBUG LOG: show side-by-side comparison
-        console.log("💾 Preparing to save payment info:");
-        console.log("Order ID:", mealOrder._id);
-        console.log("Payment object to save:", mealOrder.payment);
-        console.log("Paystack reference:", reference);
-
         await mealOrder.save();
         console.log("✅ Payment reference saved in order:", mealOrder.payment);
 
+        // Return reference + authorization URL to frontend
         res.status(200).json({
             message: "Payment initiated successfully",
             order: mealOrder,
             paymentReference: reference,
+            authorizationUrl, // <<< frontend uses this to complete payment
         });
 
     } catch (err) {
