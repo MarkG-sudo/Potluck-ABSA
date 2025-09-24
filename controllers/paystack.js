@@ -354,17 +354,15 @@ export const createPaymentController = async (req, res, next) => {
 
         if (!mealOrder) return res.status(404).json({ message: "Order not found" });
 
-        console.log("💡 Meal Order fetched:", mealOrder);
+        console.log("💡 Meal Order fetched. Total Price:", mealOrder.totalPrice);
 
-        // ✅ Initiate payment with Paystack
-        const amountInPesewas = Math.round(mealOrder.totalPrice * 100); // 1 GHS = 100 pesewas
-
+        // ✅ FIXED: Send amount in GHS (not multiplied by 100)
         const paymentResponse = await initiatePayment({
-            amount: amountInPesewas,
+            amount: mealOrder.totalPrice, // Send GHS amount directly
             email: user.email,
             method,
             momo,
-            currency: "GHS", // ✅ add this line
+            currency: "GHS",
             metadata: {
                 orderId: mealOrder._id.toString(),
                 buyerId: user._id.toString(),
@@ -402,7 +400,6 @@ export const createPaymentController = async (req, res, next) => {
         next(err);
     }
 };
-
 
 // export const createPaymentController = async (req, res, next) => {
 //     try {
