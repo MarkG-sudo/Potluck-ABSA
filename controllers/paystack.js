@@ -182,52 +182,39 @@ export const createPaymentController = async (req, res, next) => {
         if (!user) return res.status(404).json({ message: "User not found" });
 
         // ✅ Fetch order
-        const order = await MealOrder.findById(orderId).populate("meal chef buyer");
+        const order = await MealOrder.findById(orderId);
         if (!order) return res.status(404).json({ message: "Order not found" });
 
-        if (order.payment.status === "paid") {
-            return res.status(400).json({ message: "Order already paid" });
+        // ✅ Initiate payment via Paystack
+        const verified = await verifyPayment(order.payment.reference);
+
+        // ✅ Safety check for Paystack response
+        if (!verified || !verified.data) {
+            console.log("Paystack verification failed:", verified);
+            return res.status(400).json({ message: "Payment verification failed or returned unexpected data" });
         }
 
-        // ✅ Ensure payment reference exists
-        if (!order.payment.reference) {
-            order.payment.reference = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            await order.save();
+        // ✅ Optional: check amount matches
+        if (verified.data.amount !== order.totalPrice * 100) {
+            return res.status(400).json({ message: "Payment amount mismatch" });
         }
 
-        // ✅ Initiate payment with Paystack
-        const paymentPayload = {
-            email: user.email,
-            amount: order.totalPrice * 100, // Paystack expects kobo
-            reference: order.payment.reference,
-            callback_url: `${process.env.BASE_URL}/api/paystack/verify`,
-            metadata: {
-                orderId: order._id.toString(),
-                buyerId: user._id.toString(),
-                chefId: order.chef._id.toString(),
-                paymentMethod: method
-            },
-            ...(method === "momo" && momo ? { mobile_money: momo } : {})
-        };
+        // ✅ Update order payment details safely
+        if (!order.payment) order.payment = {};
+        order.payment.status = "paid";
+        order.payment.transactionId = verified.data.id || null;
 
-        const paystackResponse = await initiatePayment(paymentPayload);
+        await order.save();
 
-        // ✅ Respond with authorization URL
-        res.status(200).json({
-            message: "Payment initiated",
-            authorizationUrl: paystackResponse.data.authorization_url,
-            reference: order.payment.reference
+        return res.status(200).json({
+            message: "Payment successful and order updated",
+            order,
+            verifiedData: verified.data // optional for debugging
         });
 
-        // ✅ Optional: save notification for payment initiated
-        await NotificationModel.create({
-            user: order.buyer._id,
-            title: "Payment Initiated",
-            message: `Payment for your order ${order._id} has been initiated.`,
-            data: { orderId: order._id.toString() }
-        });
     } catch (error) {
-        next(error);
+        console.error("Error in createPaymentController:", error);
+        return res.status(500).json({ message: "Internal server error", error: error.message });
     }
 };
 
