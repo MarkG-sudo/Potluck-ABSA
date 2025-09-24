@@ -8,7 +8,7 @@ import { createOrderValidator } from "../validators/mealOrder.js";
 import crypto from "crypto";
 
 // 🔑 Helper: generate unique Paystack reference
-const generateReference = (prefix = "ORD") => {
+export const generateReference = (prefix = "ORD") => {
     return `${prefix}_${crypto.randomBytes(8).toString("hex")}_${Date.now()}`;
 };
 
@@ -80,7 +80,7 @@ export const placeOrder = async (req, res, next) => {
         res.status(201).json({
             message: "Order placed successfully",
             order,
-            paymentReference: paystackReference // front-end can pick this up for /create-payment
+            paymentReference: paystackReference 
         });
 
     } catch (error) {

@@ -6,6 +6,7 @@ import { NotificationModel } from "../models/notifications.js";
 import { mailtransporter } from "../utils/mail.js";
 import { sendUserNotification } from "../utils/push.js";
 
+
 export const paystackWebhook = async (req, res, next) => {
     try {
         const rawBody = req.rawBody || JSON.stringify(req.body);
@@ -169,6 +170,7 @@ export const paystackWebhook = async (req, res, next) => {
     }
 };
 
+
 export const createPaymentController = async (req, res, next) => {
     try {
         const { orderId, method, momo } = req.body;
@@ -177,28 +179,24 @@ export const createPaymentController = async (req, res, next) => {
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
         if (!user) return res.status(404).json({ message: "User not found" });
 
-        // ✅ Fetch order
-        const mealOrder = await MealOrder.findById(orderId).populate("buyer chef meal");
-        if (!mealOrder) return res.status(404).json({ message: "Order not found" });
+        // ✅ Fetch meal order with full population
+        const mealOrder = await MealOrder.findById(orderId)
+            .populate("buyer", "firstName lastName email")
+            .populate("chef", "firstName lastName email paystack")
+            .populate("meal", "mealName price");
 
-        // ✅ Check if already paid
+        if (!mealOrder) return res.status(404).json({ message: "Order not found" });
         if (mealOrder.payment.status === "paid") {
             return res.status(400).json({ message: "Order already paid" });
         }
 
-        const amount = mealOrder.totalPrice;
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ message: "Invalid order amount" });
-        }
-
-        const subaccount = mealOrder.chef?.paystack?.subaccountCode || undefined;
-
-        // ✅ Use pre-generated reference or generate if missing
-        const reference = mealOrder.payment.reference || generateReference();
+        // ✅ Use pre-generated reference or generate inline
+        const reference = mealOrder.payment.reference || `ORD_${crypto.randomBytes(6).toString("hex")}_${Date.now()}`;
         mealOrder.payment.reference = reference;
         mealOrder.payment.method = method || mealOrder.payment.method;
         await mealOrder.save();
 
+        // ✅ Prepare metadata
         const metadata = {
             orderId: mealOrder._id.toString(),
             buyerId: user._id.toString(),
@@ -208,6 +206,13 @@ export const createPaymentController = async (req, res, next) => {
         };
 
         // ✅ Initiate Paystack payment
+        const amount = mealOrder.totalPrice;
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ message: "Invalid order amount" });
+        }
+
+        const subaccount = mealOrder.chef?.paystack?.subaccountCode || undefined;
+
         const response = await initiatePayment({
             email: user.email,
             amount,
@@ -222,6 +227,7 @@ export const createPaymentController = async (req, res, next) => {
             throw new Error("Unexpected Paystack response shape");
         }
 
+        // ✅ Log notification
         await NotificationModel.create({
             user: null,
             title: "🔄 Payment Initiated",
@@ -233,9 +239,10 @@ export const createPaymentController = async (req, res, next) => {
         return res.status(200).json({
             status: "success",
             authorizationUrl: psData.authorization_url,
-            reference: psData.reference,
+            reference: mealOrder.payment.reference,
             metadata,
         });
+
     } catch (err) {
         console.error("createPaymentController error:", err.response?.data || err.message);
         return res.status(500).json({
@@ -244,6 +251,7 @@ export const createPaymentController = async (req, res, next) => {
         });
     }
 };
+
 
 
 export const verifyPaymentController = async (req, res, next) => {
@@ -351,3 +359,83 @@ export const verifyPaymentController = async (req, res, next) => {
         });
     }
 };
+
+
+// export const createPaymentController = async (req, res, next) => {
+//     try {
+//         const { orderId, method, momo } = req.body;
+
+//         // ✅ Fetch user
+//         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
+//         if (!user) return res.status(404).json({ message: "User not found" });
+
+//         // ✅ Fetch order
+//         const mealOrder = await MealOrder.findById(orderId).populate("buyer chef meal");
+//         if (!mealOrder) return res.status(404).json({ message: "Order not found" });
+
+//         // ✅ Check if already paid
+//         if (mealOrder.payment.status === "paid") {
+//             return res.status(400).json({ message: "Order already paid" });
+//         }
+
+//         const amount = mealOrder.totalPrice;
+//         if (!amount || amount <= 0) {
+//             return res.status(400).json({ message: "Invalid order amount" });
+//         }
+
+//         const subaccount = mealOrder.chef?.paystack?.subaccountCode || undefined;
+
+//         // ✅ Use pre-generated reference or generate if missing
+//         const reference = mealOrder.payment.reference || generateReference();
+//         mealOrder.payment.reference = reference;
+//         mealOrder.payment.method = method || mealOrder.payment.method;
+//         await mealOrder.save();
+
+//         const metadata = {
+//             orderId: mealOrder._id.toString(),
+//             buyerId: user._id.toString(),
+//             chefId: mealOrder.chef?._id?.toString(),
+//             paymentMethod: method,
+//             reference,
+//         };
+
+//         // ✅ Initiate Paystack payment
+//         const response = await initiatePayment({
+//             email: user.email,
+//             amount,
+//             metadata,
+//             method,
+//             momo,
+//             subaccount,
+//         });
+
+//         const psData = response?.data;
+//         if (!psData) {
+//             throw new Error("Unexpected Paystack response shape");
+//         }
+
+//         await NotificationModel.create({
+//             user: null,
+//             title: "🔄 Payment Initiated",
+//             body: `Payment initiated for order ${mealOrder._id}. Amount: GHS ${amount}`,
+//             url: `/admin/orders/${mealOrder._id}`,
+//             type: "payment",
+//         });
+
+//         return res.status(200).json({
+//             status: "success",
+//             authorizationUrl: psData.authorization_url,
+//             reference: psData.reference,
+//             metadata,
+//         });
+//     } catch (err) {
+//         console.error("createPaymentController error:", err.response?.data || err.message);
+//         return res.status(500).json({
+//             message: "Payment initiation failed",
+//             error: err.response?.data?.message || err.message,
+//         });
+//     }
+// };
+
+
+
