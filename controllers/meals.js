@@ -1,5 +1,5 @@
 import { addMealValidator, updateMealValidator, mealQueryValidator } from "../validators/meals.js";
-import { Meal } from "../models/meals.js";
+import { MealModel } from "../models/meals.js";
 import mongoose from "mongoose";
 
 // Create a new Meal
@@ -23,7 +23,7 @@ export const createMeal = async (req, res, next) => {
         }
 
         // 🟢 Create the meal
-        const meal = await Meal.create({
+        const meal = await MealModel.create({
             ...value,
             photos: photoUrls,
             createdBy: req.auth.id,
@@ -93,8 +93,8 @@ export const getAllMeals = async (req, res, next) => {
 
         const skip = (page - 1) * limit;
 
-        const total = await Meal.countDocuments(filter);
-        const meals = await Meal.find(filter)
+        const total = await MealModel.countDocuments(filter);
+        const meals = await MealModel.find(filter)
             .populate("createdBy", "firstName lastName email")
             .sort(sort)
             .skip(skip)
@@ -122,7 +122,7 @@ export const getMealById = async (req, res, next) => {
             return res.status(400).json({ error: "Invalid meal ID" });
         }
 
-        const meal = await Meal.findById(id)
+        const meal = await MealModel.findById(id)
             .populate("createdBy", "firstName lastName avatar")
             .populate({
                 path: 'reviews', // Populate the virtual field
@@ -191,7 +191,7 @@ export const updateMeal = async (req, res, next) => {
         }
 
         // ✅ Update meal only if user owns it
-        const updatedMeal = await Meal.findOneAndUpdate(
+        const updatedMeal = await MealModel.findOneAndUpdate(
             { _id: mealId, createdBy: req.auth.id },
             value,
             { new: true, runValidators: true }
@@ -219,7 +219,7 @@ export const deleteMeal = async (req, res, next) => {
             return res.status(400).json({ error: "Invalid meal ID" });
         }
 
-        const deleted = await Meal.findOneAndDelete({
+        const deleted = await MealModel.findOneAndDelete({
             _id: mealId,
             createdBy: req.auth.id
         });
@@ -237,7 +237,7 @@ export const deleteMeal = async (req, res, next) => {
 // Get meals by Potchef (authenticated)
 export const getMyMeals = async (req, res, next) => {
     try {
-        const meals = await Meal.find({ createdBy: req.auth.id })
+        const meals = await MealModel.find({ createdBy: req.auth.id })
             .populate({
                 path: 'reviews', // Use the virtual field
                 select: 'reviewer rating comment createdAt',
@@ -277,7 +277,7 @@ export const getMyMealById = async (req, res, next) => {
             return res.status(400).json({ error: "Invalid meal ID" });
         }
 
-        const meal = await Meal.findOne({
+        const meal = await MealModel.findOne({
             _id: id,
             createdBy: req.auth.id
         });
@@ -300,7 +300,7 @@ export const updateMealStatusByChef = async (req, res, next) => {
             return res.status(400).json({ error: "Invalid status for Potchef" });
         }
 
-        const updated = await Meal.findOneAndUpdate(
+        const updated = await MealModel.findOneAndUpdate(
             { _id: id, createdBy: req.auth.id },
             { status },
             { new: true }
@@ -329,7 +329,7 @@ export const moderateMealStatusByAdmin = async (req, res, next) => {
             return res.status(400).json({ error: "Only Approved or Rejected allowed for admin moderation" });
         }
 
-        const updated = await Meal.findByIdAndUpdate(
+        const updated = await MealModel.findByIdAndUpdate(
             id,
             { status },
             { new: true }

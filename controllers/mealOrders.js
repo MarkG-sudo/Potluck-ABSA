@@ -1,10 +1,10 @@
 import axios from "axios";
-import { Meal } from "../models/meals.js";
+import { MealModel } from "../models/meals.js";
 import { MealOrder } from "../models/mealOrder.js";
-import { createOrderValidator } from "../validators/mealOrder.js";
-import { initiatePayment } from "../utils/paystack.js";
 import { sendUserNotification } from "../utils/push.js";
 import { NotificationModel } from "../models/notifications.js";
+import { updateOrderValidator } from "../validators/mealOrder.js";
+import { createOrderValidator } from "../validators/mealOrder.js";
 import crypto from "crypto";
 
 // 🔑 Helper: generate unique Paystack reference
@@ -12,209 +12,83 @@ const generateReference = (prefix = "ORD") => {
     return `${prefix}_${crypto.randomBytes(8).toString("hex")}_${Date.now()}`;
 };
 
+
 export const placeOrder = async (req, res, next) => {
     try {
-        // ✅ Validate request body
+        // 1️⃣ Validate request
         const { error, value } = createOrderValidator.validate(req.body);
-        if (error) {
-            return res
-                .status(422)
-                .json({ error: error.details.map((d) => d.message) });
+        if (error) return res.status(400).json({ error: error.details[0].message });
+
+        const { meal: mealId, quantity, pickupTime, notes, paymentMethod } = value;
+
+        // 2️⃣ Fetch meal and check availability
+        const meal = await MealModel.findById(mealId).populate("createdBy", "firstName lastName email");
+        if (!meal) return res.status(404).json({ error: "Meal not found" });
+        if (meal.status !== "Available") return res.status(400).json({ error: "Meal is not available for ordering" });
+
+        // 3️⃣ Calculate totals
+        const totalPrice = meal.price * quantity;
+        const commissionRate = 0.15;
+        const commission = totalPrice * commissionRate;
+        const vendorEarnings = totalPrice - commission;
+
+        // 4️⃣ Generate Paystack reference only if needed
+        let paystackReference = null;
+        if (paymentMethod === "card" || paymentMethod === "momo") {
+            paystackReference = generateReference();
         }
 
-        const { meal, quantity, pickupTime, notes, paymentMethod, momo } = value;
-
-        // ✅ Find meal
-        const mealDoc = await Meal.findById(meal).populate("createdBy", "_id");
-        if (!mealDoc) {
-            return res.status(404).json({ error: "Meal not found" });
-        }
-
-        // ✅ Prevent ordering unavailable meals
-        if (mealDoc.status !== "Available" && mealDoc.status !== "Approved") {
-            return res.status(400).json({ error: "Meal is not available for ordering" });
-        }
-
-        // 💰 Calculate price & commission
-        const mealPrice = mealDoc.price * quantity;
-        const commission = mealPrice * 0.15;
-        const vendorEarnings = mealPrice - commission;
-
-        const chef = mealDoc.createdBy._id;
-
-        // ✅ Create order first (status pending)
-        const newOrder = await MealOrder.create({
-            meal,
+        // 5️⃣ Create order
+        const order = await MealOrder.create({
+            meal: meal._id,
             buyer: req.auth.id,
-            chef,
+            chef: meal.createdBy._id,
             quantity,
+            totalPrice,
+            status: "Pending",
             pickupTime,
-            totalPrice: mealPrice,
+            notes,
             commission,
             vendorEarnings,
             platformEarnings: commission,
-            notes,
-            payment: { method: paymentMethod, status: "pending" },
-        });
-
-        let paystackResponse = null;
-
-        // ✅ Handle online payments
-        if (paymentMethod !== "cash") {
-            try {
-                paystackResponse = await initiatePayment({
-                    email: req.auth.email,
-                    amount: mealPrice, // NOTE: initiatePayment util should handle *100
-                    metadata: {
-                        orderId: newOrder._id.toString(),
-                        buyerId: req.auth.id,
-                        chefId: chef,
-                        paymentMethod,
-                    },
-                    method: paymentMethod, // "momo" | "bank" | "card"
-                    momo,
-                });
-
-                newOrder.payment.reference = paystackResponse.reference;
-                await newOrder.save();
-            } catch (err) {
-                return res.status(500).json({
-                    error: "Payment initialization failed",
-                    details: err.message,
-                });
+            payment: {
+                method: paymentMethod || "cash",
+                status: "pending",
+                reference: paystackReference // pre-store reference if needed
             }
-        }
-
-        // ✅ Auto-populate meal, chef, buyer
-        const populatedOrder = await MealOrder.findById(newOrder._id)
-            .populate("buyer", "firstName lastName email")
-            .populate("chef", "firstName lastName email")
-            .populate("meal", "mealName price");
-
-        // 🔔 Notify chef immediately
-        await sendUserNotification(chef, {
-            title: "🍽 New Order Received",
-            body: `A customer just ordered ${quantity}x ${mealDoc.mealName}.`,
-            url: "/dashboard/orders",
         });
 
+        // 6️⃣ Notify Chef
         await NotificationModel.create({
-            user: chef,
-            title: "🍽 New Order",
-            body: `You have a new order for ${quantity}x ${mealDoc.mealName}.`,
-            url: `/dashboard/orders/${newOrder._id}`,
-            type: "order",
+            user: meal.createdBy._id,
+            title: "🍲 New Order",
+            body: `You have a new order for ${quantity}x ${meal.mealName}.`,
+            url: `/dashboard/orders/${order._id}`,
+            type: "order"
         });
 
+        // 7️⃣ Notify Buyer
+        await NotificationModel.create({
+            user: req.auth.id,
+            title: "📦 Order Placed",
+            body: `Your order for ${quantity}x ${meal.mealName} has been placed.`,
+            url: `/dashboard/my-orders/${order._id}`,
+            type: "order"
+        });
+
+        // 8️⃣ Respond
         res.status(201).json({
             message: "Order placed successfully",
-            order: populatedOrder,
-            payment: paystackResponse,
+            order,
+            paymentReference: paystackReference // front-end can pick this up for /create-payment
         });
-    } catch (err) {
-        next(err);
+
+    } catch (error) {
+        console.error("Place Order Error:", error);
+        next(error);
     }
 };
 
-
-// export const placeOrder = async (req, res, next) => {
-//     try {
-//         // ✅ Validate request body
-//         const { error, value } = createOrderValidator.validate(req.body);
-//         if (error) {
-//             return res.status(422).json({ error: error.details.map(d => d.message) });
-//         }
-
-//         const { meal, quantity, pickupTime, notes, paymentMethod } = value;
-
-//         // ✅ Find meal
-//         const mealDoc = await Meal.findById(meal).populate("createdBy", "_id");
-//         if (!mealDoc) {
-//             return res.status(404).json({ error: "Meal not found" });
-//         }
-
-//         // ✅ Prevent ordering unavailable meals
-//         if (mealDoc.status !== "Available" && mealDoc.status !== "Approved") {
-//             return res.status(400).json({ error: "Meal is not available for ordering" });
-//         }
-
-       
-//         // 💰 Calculate price & commission
-//         const mealPrice = mealDoc.price * quantity;
-//         const commission = mealPrice * 0.15;
-//         const vendorEarnings = mealPrice - commission;
-
-//         const chef = mealDoc.createdBy._id;
-
-//         const newOrder = await MealOrder.create({
-//             meal,
-//             buyer: req.auth.id,
-//             chef,
-//             quantity,
-//             pickupTime,
-//             totalPrice: mealPrice,
-//             commission,
-//             vendorEarnings,
-//             notes,
-//             payment: { method: paymentMethod, status: "pending" }
-//         });
-
-//         let paystackResponse = null;
-
-//         if (paymentMethod !== "cash") {
-//             try {
-//                 if (paymentMethod === "momo") {
-//                     paystackResponse = await axios.post(
-//                         "https://api.paystack.co/charge",
-//                         {
-//                             email: req.auth.email,
-//                             amount: mealPrice * 100, // in pesewa
-//                             currency: "GHS",
-//                             mobile_money: {
-//                                 phone: req.auth.phone,
-//                                 provider: "mtn" // TODO: dynamic based on user input
-//                             }
-//                         },
-//                         { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-//                     );
-//                 } else {
-//                     paystackResponse = await axios.post(
-//                         "https://api.paystack.co/transaction/initialize",
-//                         {
-//                             email: req.auth.email,
-//                             amount: mealPrice * 100,
-//                             currency: "GHS",
-//                             channels: paymentMethod === "bank" ? ["bank"] : ["card"]
-//                         },
-//                         { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-//                     );
-//                 }
-
-//                 newOrder.payment.reference = paystackResponse.data.data.reference;
-//                 await newOrder.save();
-//             } catch (err) {
-//                 return res.status(500).json({ error: "Payment initialization failed", details: err.message });
-//             }
-//         }
-
-//         // ✅ Auto-populate meal, chef, buyer
-//         const populatedOrder = await MealOrder.findById(newOrder._id);
-//         // 🔔 Notify chef of new order
-//         await sendUserNotification(chef, {
-//             title: "🍽️ New Order Received",
-//             body: `A customer just ordered ${quantity}x ${mealDoc.mealName}.`,
-//             url: "/dashboard/orders"
-//         });
-
-//         res.status(201).json({
-//             message: "Order placed successfully",
-//             order: populatedOrder,
-//             payment: paystackResponse ? paystackResponse.data.data : null
-//         });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
 
 export const getMyOrders = async (req, res, next) => {
     try {
@@ -420,102 +294,52 @@ export const getOneOrder = async (req, res, next) => {
 };
 
 
-// export const updateOrderStatus = async (req, res, next) => {
-//     try {
-//         const { orderId } = req.params;
-//         const { status } = req.body;
-
-//         const allowed = ["Preparing", "Ready", "Delivering", "Delivered", "Cancelled"];
-//         if (!allowed.includes(status)) {
-//             return res.status(400).json({ error: "Invalid status update" });
-//         }
-
-//         const order = await MealOrder.findOne({
-//             _id: orderId,
-//             chef: req.auth.id
-//         }).populate("meal buyer");
-
-//         if (!order) {
-//             return res.status(404).json({ error: "Order not found or access denied" });
-//         }
-
-//         order.status = status;
-//         if (status === "Preparing") order.acceptedAt = new Date();
-//         if (status === "Ready") order.readyAt = new Date();
-//         if (status === "Delivering") order.deliveringAt = new Date();
-//         if (status === "Delivered") order.deliveredAt = new Date();
-//         if (status === "Cancelled") order.cancelledAt = new Date();
-
-//         order.updatedBy = req.auth.id;
-//         await order.save();
-
-//         // 🔔 Notify buyer of order update
-//         const mealName = order.meal?.mealName || "your meal";
-//         await sendUserNotification(order.buyer._id, {
-//             title: "📦 Order Update",
-//             body: `Your order for ${mealName} is now ${status}.`,
-//             url: "/orders"
-//         });
-
-//         res.json({
-//             message: `Order has been ${status.toLowerCase()}`,
-//             order
-//         });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
-
 // ✅ Define status constants and transitions (can be exported from a constants file later)
 
 const ORDER_STATUS = {
-    PENDING: 'Pending',
-    PREPARING: 'Preparing',
-    READY: 'Ready',
-    DELIVERING: 'Delivering',
-    DELIVERED: 'Delivered',
-    CANCELLED: 'Cancelled'
+    PENDING: "Pending",
+    PREPARING: "Preparing",
+    READY: "Ready",
+    DELIVERING: "Delivering",
+    DELIVERED: "Delivered",
+    CANCELLED: "Cancelled"
 };
 
-// Define a state machine for logical status transitions
+// Allowed transitions (state machine)
 const statusTransitions = {
     [ORDER_STATUS.PENDING]: [ORDER_STATUS.PREPARING, ORDER_STATUS.CANCELLED],
     [ORDER_STATUS.PREPARING]: [ORDER_STATUS.READY, ORDER_STATUS.CANCELLED],
-    [ORDER_STATUS.READY]: [ORDER_STATUS.DELIVERING],
+    [ORDER_STATUS.READY]: [ORDER_STATUS.DELIVERING, ORDER_STATUS.CANCELLED],
     [ORDER_STATUS.DELIVERING]: [ORDER_STATUS.DELIVERED],
-    [ORDER_STATUS.DELIVERED]: [], // Final state
-    [ORDER_STATUS.CANCELLED]: []  // Final state
+    [ORDER_STATUS.DELIVERED]: [],
+    [ORDER_STATUS.CANCELLED]: []
 };
 
 export const updateOrderStatus = async (req, res, next) => {
     try {
+        // ✅ Joi validation
+        const { error, value } = updateOrderValidator.validate(req.body);
+        if (error) {
+            return res.status(400).json({ error: error.details[0].message });
+        }
+        const { status } = value;
         const { orderId } = req.params;
-        const { status } = req.body;
 
-        // ✅ Use the constants for validation
-        const allowedStatuses = Object.values(ORDER_STATUS);
-        if (!allowedStatuses.includes(status)) {
-            return res.status(400).json({ error: "Invalid status value" });
-        }
-
-        const order = await MealOrder.findOne({
-            _id: orderId,
-            chef: req.auth.id
-        }).populate("meal buyer");
-
+        // ✅ Find order (only the chef can update)
+        const order = await MealOrder.findOne({ _id: orderId, chef: req.auth.id });
         if (!order) {
-            return res.status(404).json({ error: "Order not found or access denied" });
+            return res.status(404).json({ error: "Order not found or unauthorized" });
         }
 
-        // ✅ Check for logical status transition
-        if (!statusTransitions[order.status].includes(status)) {
+        // ✅ Check transition rules
+        const validNextStatuses = statusTransitions[order.status] || [];
+        if (!validNextStatuses.includes(status)) {
             return res.status(400).json({
-                error: `Cannot change status from '${order.status}' to '${status}'.`
+                error: `Invalid status transition from '${order.status}' to '${status}'`
             });
         }
 
-        // ✅ Update status and timestamps
+        // ✅ Apply status + timestamps
         order.status = status;
         if (status === ORDER_STATUS.PREPARING) order.acceptedAt = new Date();
         if (status === ORDER_STATUS.READY) order.readyAt = new Date();
@@ -526,74 +350,55 @@ export const updateOrderStatus = async (req, res, next) => {
         order.updatedBy = req.auth.id;
         await order.save();
 
-        // ✅ Create a context-aware notification
-        const mealName = order.meal?.mealName || "your meal";
-        let notificationTitle;
-        let notificationBody = `Your order for ${mealName} is now ${status}.`;
-
-        // Tailor the title and body based on the new status
+        // ✅ Send notification to buyer
+        let notificationTitle, notificationBody;
         switch (status) {
             case ORDER_STATUS.PREPARING:
-                notificationTitle = "👨‍🍳 Order Accepted!";
-                notificationBody = `Chef has started preparing your order for ${mealName}.`;
+                notificationTitle = "Order Accepted";
+                notificationBody = "Your order is now being prepared.";
                 break;
             case ORDER_STATUS.READY:
-                notificationTitle = "✅ Order Ready for Pickup!";
+                notificationTitle = "Order Ready";
+                notificationBody = "Your order is ready for pickup.";
                 break;
             case ORDER_STATUS.DELIVERING:
-                notificationTitle = "🚗 Order On The Way!";
+                notificationTitle = "Order Out for Delivery";
+                notificationBody = "Your order is on the way.";
                 break;
             case ORDER_STATUS.DELIVERED:
-                notificationTitle = "🎉 Order Delivered!";
-                notificationBody = `Your order for ${mealName} has been delivered. Enjoy!`;
+                notificationTitle = "Order Delivered";
+                notificationBody = "Your order has been delivered.";
                 break;
             case ORDER_STATUS.CANCELLED:
-                notificationTitle = "❌ Order Cancelled";
-                notificationBody = `Your order for ${mealName} has been cancelled.`;
+                notificationTitle = "Order Cancelled";
+                notificationBody = "Your order has been cancelled.";
                 break;
             default:
-                notificationTitle = "📦 Order Updated";
+                notificationTitle = "Order Updated";
+                notificationBody = `Your order status changed to ${status}.`;
         }
 
-        // 🔔 Notify buyer of the order update
-        console.log("DEBUG: [1] About to call sendUserNotification");
-        console.log("DEBUG: [2] Buyer ID:", order.buyer._id.toString());
-        console.log("DEBUG: [3] Notification Payload:", { title: notificationTitle, body: notificationBody, url: "/orders" });
-
-        // 🔔 Notify buyer of the order update (push notification)
+        // Push + DB notification
         await sendUserNotification(order.buyer._id, {
             title: notificationTitle,
-            body: notificationBody,
-            url: "/orders"
+            body: notificationBody
         });
 
-        console.log("DEBUG: [4] Successfully called sendUserNotification");
+        await NotificationModel.create({
+            user: order.buyer._id,
+            title: notificationTitle,
+            body: notificationBody,
+            order: order._id
+        });
 
-        // 📝 Store notification in database
-        try {
-            const notification = new NotificationModel({
-                user: order.buyer._id,
-                title: notificationTitle,
-                body: notificationBody,
-                url: "/orders",
-                type: 'order', // Using 'order' type as per your schema enum
-                isRead: false
-            });
-
-            await notification.save();
-            console.log("DEBUG: [5] Notification stored in database:", notification._id);
-        } catch (dbError) {
-            console.error("DEBUG: [6] Error storing notification in database:", dbError);
-            // Don't throw error here to avoid breaking the main flow
-            // You might want to log this to a monitoring service
-        }
-
+        // ✅ Return populated order
+        const populatedOrder = await order.populate("meal buyer");
         res.json({
             message: `Order status updated to '${status}' successfully.`,
-            order
+            order: populatedOrder
         });
+
     } catch (err) {
-        console.error("DEBUG: [7] Error in updateOrderStatus controller:", err);
         next(err);
     }
 };

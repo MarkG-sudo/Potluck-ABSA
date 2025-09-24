@@ -172,12 +172,16 @@ export const paystackWebhook = async (req, res, next) => {
 export const createPaymentController = async (req, res, next) => {
     try {
         const { orderId, method, momo } = req.body;
+
+        // ✅ Fetch user
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
         if (!user) return res.status(404).json({ message: "User not found" });
 
+        // ✅ Fetch order
         const mealOrder = await MealOrder.findById(orderId).populate("buyer chef meal");
         if (!mealOrder) return res.status(404).json({ message: "Order not found" });
 
+        // ✅ Check if already paid
         if (mealOrder.payment.status === "paid") {
             return res.status(400).json({ message: "Order already paid" });
         }
@@ -188,7 +192,12 @@ export const createPaymentController = async (req, res, next) => {
         }
 
         const subaccount = mealOrder.chef?.paystack?.subaccountCode || undefined;
-        const reference = `ORD_${crypto.randomBytes(6).toString("hex")}_${Date.now()}`;
+
+        // ✅ Use pre-generated reference or generate if missing
+        const reference = mealOrder.payment.reference || generateReference();
+        mealOrder.payment.reference = reference;
+        mealOrder.payment.method = method || mealOrder.payment.method;
+        await mealOrder.save();
 
         const metadata = {
             orderId: mealOrder._id.toString(),
@@ -198,6 +207,7 @@ export const createPaymentController = async (req, res, next) => {
             reference,
         };
 
+        // ✅ Initiate Paystack payment
         const response = await initiatePayment({
             email: user.email,
             amount,
@@ -211,10 +221,6 @@ export const createPaymentController = async (req, res, next) => {
         if (!psData) {
             throw new Error("Unexpected Paystack response shape");
         }
-
-        mealOrder.payment.reference = psData.reference;
-        mealOrder.payment.method = method;
-        await mealOrder.save();
 
         await NotificationModel.create({
             user: null,
@@ -238,6 +244,7 @@ export const createPaymentController = async (req, res, next) => {
         });
     }
 };
+
 
 export const verifyPaymentController = async (req, res, next) => {
     try {
@@ -276,11 +283,12 @@ export const verifyPaymentController = async (req, res, next) => {
             return res.status(200).json({ message: "Order already marked paid" });
         }
 
+        // ✅ Update payment details but **do not overwrite reference if pre-set**
         mealOrder.payment.status = "paid";
         mealOrder.payment.transactionId = ps.id;
         mealOrder.payment.channel = ps.channel;
         mealOrder.payment.paidAt = ps.paid_at ? new Date(ps.paid_at) : new Date();
-        mealOrder.payment.reference = ps.reference;
+        mealOrder.payment.reference = mealOrder.payment.reference || ps.reference;
 
         const commission = mealOrder.totalPrice * 0.15;
         mealOrder.commission = commission;
@@ -288,6 +296,7 @@ export const verifyPaymentController = async (req, res, next) => {
 
         await mealOrder.save();
 
+        // 🔔 Notifications
         try {
             await sendUserNotification(mealOrder.chef._id, {
                 title: "💰 New Paid Order",
@@ -303,6 +312,7 @@ export const verifyPaymentController = async (req, res, next) => {
             console.warn("Push notification failed:", pushErr?.message || pushErr);
         }
 
+        // 📧 Email
         try {
             await mailtransporter.sendMail({
                 from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
@@ -326,7 +336,7 @@ export const verifyPaymentController = async (req, res, next) => {
             status: "success",
             message: "Payment verified successfully",
             data: {
-                reference: ps.reference,
+                reference: mealOrder.payment.reference,
                 amount: ps.amount / 100,
                 currency: ps.currency,
                 channel: ps.channel,

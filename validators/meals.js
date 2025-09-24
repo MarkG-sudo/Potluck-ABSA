@@ -6,96 +6,48 @@ export const addMealValidator = Joi.object({
     description: Joi.string().trim().required().label("Description"),
     price: Joi.number().min(0).required().label("Price (GHS)"),
     servings: Joi.number().integer().min(1).required().label("Servings"),
-
     category: Joi.string().trim().required().label("Category"),
     cuisine: Joi.string().trim().required().label("Cuisine"),
-
-    spiceLevel: Joi.string()
-        .valid("Mild", "Medium", "Hot", "Very Hot")
-        .required()
-        .label("Spice Level"),
-
-    dietaryRestrictions: Joi.array()
-        .items(
-            Joi.string().valid(
-                "Vegetarian",
-                "Vegan",
-                "Gluten-Free",
-                "Halal",
-                "Kosher",
-                "Dairy-Free",
-                "Nut-Free"
-            )
-        )
-        .label("Dietary Restrictions"),
-
-    mainIngredients: Joi.array()
-        .items(Joi.string().trim())
-        .min(1)
-        .required()
-        .label("Main Ingredients"),
-
+    spiceLevel: Joi.string().valid("Mild", "Medium", "Hot", "Very Hot").required(),
+    dietaryRestrictions: Joi.array().items(Joi.string().valid(
+        "Vegetarian", "Vegan", "Gluten-Free", "Halal", "Kosher", "Dairy-Free", "Nut-Free"
+    )),
+    mainIngredients: Joi.array().items(Joi.string().trim()).min(1).required(),
     cookingTime: Joi.number().min(1).required().label("Cooking Time (minutes)"),
-
-    pickupLocation: Joi.string().trim().required().label("Pickup Location"),
-
-    availableFrom: Joi.date().iso().required().label("Available From"),
-    availableTo: Joi.date().iso().required().label("Available To"),
-
-    photos: Joi.array()
-        .items(Joi.string().uri())
-        .max(5)
-        .label("Meal Photos"),
-
-    createdBy: Joi.string()
-        .pattern(/^[0-9a-fA-F]{24}$/)
-        .label("Created By")
+    pickupLocation: Joi.string().trim().required(),
+    availableFrom: Joi.date().iso().required(),
+    availableTo: Joi.date().iso().required(),
+    photos: Joi.array().items(Joi.string().uri()).max(5),
+    createdBy: Joi.string().pattern(/^[0-9a-fA-F]{24}$/),
+    status: Joi.string().valid("Available", "Unavailable", "Pending", "Approved", "Rejected"),
+    commissionRate: Joi.number().min(0).max(1).default(0.15) // new
 });
+
 
 // Update Meal Validator
 export const updateMealValidator = Joi.object({
-    mealName: Joi.string().trim().label("Meal Name"),
-    description: Joi.string().trim().label("Description"),
-    price: Joi.number().min(0).label("Price (GHS)"),
-    servings: Joi.number().integer().min(1).label("Servings"),
-
-    category: Joi.string().trim().label("Category"),
-    cuisine: Joi.string().trim().label("Cuisine"),
-
-    spiceLevel: Joi.string()
-        .valid("Mild", "Medium", "Hot", "Very Hot")
-        .label("Spice Level"),
-
-    dietaryRestrictions: Joi.array()
-        .items(
-            Joi.string().valid(
-                "Vegetarian",
-                "Vegan",
-                "Gluten-Free",
-                "Halal",
-                "Kosher",
-                "Dairy-Free",
-                "Nut-Free"
-            )
-        )
-        .label("Dietary Restrictions"),
-
-    mainIngredients: Joi.array()
-        .items(Joi.string().trim())
-        .label("Main Ingredients"),
-
-    cookingTime: Joi.number().min(1).label("Cooking Time (minutes)"),
-
-    pickupLocation: Joi.string().trim().label("Pickup Location"),
-
-    availableFrom: Joi.date().iso().label("Available From"),
-    availableTo: Joi.date().iso().label("Available To"),
-
-    photos: Joi.array()
-        .items(Joi.string().uri())
-        .max(5)
-        .label("Meal Photos")
+    mealName: Joi.string().trim(),
+    description: Joi.string().trim(),
+    price: Joi.number().min(0),
+    servings: Joi.number().integer().min(1),
+    category: Joi.string().trim(),
+    cuisine: Joi.string().trim(),
+    spiceLevel: Joi.string().valid("Mild", "Medium", "Hot", "Very Hot"),
+    dietaryRestrictions: Joi.array().items(Joi.string().valid(
+        "Vegetarian", "Vegan", "Gluten-Free", "Halal", "Kosher", "Dairy-Free", "Nut-Free"
+    )),
+    mainIngredients: Joi.array().items(Joi.string().trim()),
+    cookingTime: Joi.number().min(1),
+    pickupLocation: Joi.string().trim(),
+    availableFrom: Joi.date().iso(),
+    availableTo: Joi.date().iso(),
+    photos: Joi.array().items(Joi.string().uri()).max(5),
+    status: Joi.string().valid("Available", "Unavailable", "Pending", "Approved", "Rejected"),
+    commissionRate: Joi.number().min(0).max(1) // new
 });
+
+
+
 
 export const mealQueryValidator = Joi.object({
     status: Joi.string().valid("Pending", "Approved", "Rejected", "Available", "Unavailable"),
