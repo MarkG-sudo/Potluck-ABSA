@@ -9,17 +9,72 @@ const paystack = axios.create({
 });
 
 // ✅ Initiate a payment (bank / card / MoMo) with subaccount support
-export const initiatePayment = async ({
-    email,
-    amount,
-    metadata,
-    method,
-    momo,
-    subaccount,
-    bearer = "subaccount"
-}) => {
+// export const initiatePayment = async ({
+//     email,
+//     amount,
+//     metadata,
+//     method,
+//     momo,
+//     subaccount,
+//     bearer = "subaccount"
+// }) => {
+//     try {
+//         const scaledAmount = Math.round(amount * 100); // convert to pesewas
+
+//         const basePayload = {
+//             email,
+//             amount: scaledAmount,
+//             currency: "GHS",
+//             metadata,
+//             subaccount,
+//             bearer
+//         };
+
+//         if (method === "momo") {
+//             if (!momo?.phone || !momo?.provider) {
+//                 throw new Error("Mobile money payment requires phone and provider");
+//             }
+
+//             const res = await paystack.post("/charge", {
+//                 ...basePayload,
+//                 mobile_money: {
+//                     phone: momo.phone,
+//                     provider: momo.provider
+//                 }
+//             });
+//             return res.data.data;
+//         } else {
+//             const res = await paystack.post("/transaction/initialize", {
+//                 ...basePayload,
+//                 channels: method === "bank" ? ["bank"] : ["card", "bank"]
+//             });
+//             return res.data.data;
+//         }
+//     } catch (err) {
+//         console.error("initiatePayment error:", err.response?.data || err.message);
+//         throw new Error(err.response?.data?.message || "Failed to initiate payment");
+//     }
+// };
+
+
+// export const verifyPayment = async (reference) => {
+//     try {
+//         const res = await paystack.get(`/transaction/verify/${reference}`);
+//         return res.data.data;
+//     } catch (err) {
+//         console.error("verifyPayment error:", err.response?.data || err.message);
+//         throw new Error("Payment verification failed");
+//     }
+// };
+
+
+// ✅ Initiate payment
+export const initiatePayment = async ({ email, amount, metadata, method, momo, subaccount, bearer = "subaccount" }) => {
+    if (!email) throw new Error("Customer email is required");
+    if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
+
     try {
-        const scaledAmount = Math.round(amount * 100); // convert to pesewas
+        const scaledAmount = Math.round(amount * 100); // cedis → pesewas
 
         const basePayload = {
             email,
@@ -27,44 +82,52 @@ export const initiatePayment = async ({
             currency: "GHS",
             metadata,
             subaccount,
-            bearer
+            bearer,
         };
 
+        let res;
         if (method === "momo") {
             if (!momo?.phone || !momo?.provider) {
                 throw new Error("Mobile money payment requires phone and provider");
             }
-
-            const res = await paystack.post("/charge", {
+            res = await paystack.post("/charge", {
                 ...basePayload,
                 mobile_money: {
                     phone: momo.phone,
-                    provider: momo.provider
-                }
+                    provider: momo.provider,
+                },
             });
-            return res.data.data;
         } else {
-            const res = await paystack.post("/transaction/initialize", {
+            res = await paystack.post("/transaction/initialize", {
                 ...basePayload,
-                channels: method === "bank" ? ["bank"] : ["card", "bank"]
+                channels: method === "bank" ? ["bank"] : ["card", "bank"],
             });
-            return res.data.data;
         }
+
+        return res.data; // full Paystack response (status, message, data)
     } catch (err) {
         console.error("initiatePayment error:", err.response?.data || err.message);
         throw new Error(err.response?.data?.message || "Failed to initiate payment");
     }
 };
 
+// ✅ Verify payment
 export const verifyPayment = async (reference) => {
     try {
         const res = await paystack.get(`/transaction/verify/${reference}`);
-        return res.data.data;
+        const verified = res.data;
+
+        if (verified?.data?.currency !== "GHS") {
+            throw new Error(`Invalid currency: expected GHS, got ${verified?.data?.currency}`);
+        }
+
+        return verified; // consistent return (status, message, data)
     } catch (err) {
         console.error("verifyPayment error:", err.response?.data || err.message);
         throw new Error("Payment verification failed");
     }
 };
+
 
 // ✅ Transfers (used for chef payouts)
 export const createTransfer = async ({

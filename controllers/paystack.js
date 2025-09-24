@@ -138,17 +138,17 @@ export const paystackWebhook = async (req, res, next) => {
             return res.sendStatus(400);
         }
 
-        // ✅ Parse webhook event
+        // ✅ Parse webhook event safely
         const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
 
-        // 🔹 Handle successful charge
-        if (event.event === "charge.success") {
+        // 🔹 Handle charge success
+        if (event.event === "charge.success" && event.data.status === "success") {
             const reference = event.data.reference;
 
             // 🔎 Verify with Paystack API
             const verified = await verifyPayment(reference);
 
-            if (verified.status === "success") {
+            if (verified && verified.data && verified.data.status === "success") {
                 const order = await MealOrder.findOne({ "payment.reference": reference })
                     .populate("buyer", "firstName lastName email")
                     .populate("chef", "firstName lastName email paystack")
@@ -156,12 +156,12 @@ export const paystackWebhook = async (req, res, next) => {
 
                 if (order && order.payment.status !== "paid") {
                     // ✅ Double-check amount
-                    if (verified.amount !== order.totalPrice * 100) {
+                    if (verified.data.amount !== order.totalPrice * 100) {
                         console.error(`⚠ Payment amount mismatch for order ${order._id}`);
                         await NotificationModel.create({
                             user: null,
                             title: "⚠ Payment Mismatch",
-                            body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice}, got ${verified.amount / 100}`,
+                            body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice}, got ${verified.data.amount / 100}`,
                             url: `/admin/orders/${order._id}`,
                             type: "payment",
                             priority: "high",
@@ -170,12 +170,12 @@ export const paystackWebhook = async (req, res, next) => {
                     }
 
                     // ✅ Double-check email
-                    if (verified.customer.email !== order.buyer.email) {
-                        console.error(`⚠ Email mismatch for order ${order._id}. Paystack: ${verified.customer.email}, Expected: ${order.buyer.email}`);
+                    if (verified.data.customer.email !== order.buyer.email) {
+                        console.error(`⚠ Email mismatch for order ${order._id}. Paystack: ${verified.data.customer.email}, Expected: ${order.buyer.email}`);
                         await NotificationModel.create({
                             user: null,
                             title: "⚠ Payment Email Mismatch",
-                            body: `Reference ${reference} email mismatch. Paystack: ${verified.customer.email}, Expected: ${order.buyer.email}`,
+                            body: `Reference ${reference} email mismatch. Paystack: ${verified.data.customer.email}, Expected: ${order.buyer.email}`,
                             url: `/admin/orders/${order._id}`,
                             type: "payment",
                             priority: "high",
@@ -186,8 +186,8 @@ export const paystackWebhook = async (req, res, next) => {
                     // ✅ Update order
                     order.payment.status = "paid";
                     order.payment.reference = reference;
-                    order.payment.transactionId = verified.id; // Paystack transaction ID
-                    order.payment.channel = verified.channel;  // e.g., "bank", "card", "mobile_money"
+                    order.payment.transactionId = verified.data.id; // Paystack transaction ID
+                    order.payment.channel = verified.data.channel;  // e.g., "bank", "card", "mobile_money"
                     order.paidAt = new Date();
 
                     // ✅ Commission + vendor earnings
@@ -197,14 +197,14 @@ export const paystackWebhook = async (req, res, next) => {
 
                     await order.save();
 
-                    // TODO: 🔔 Trigger vendor payout logic here if needed
+                    console.log(`✅ Order ${order._id} marked as paid via webhook.`);
                 } else {
                     console.log(`ℹ Order with reference ${reference} not found or already paid.`);
                 }
             }
         }
 
-        // 🔹 Handle transfer events
+        // 🔹 Handle transfer success
         if (event.event === "transfer.success") {
             await NotificationModel.create({
                 user: null,
@@ -215,6 +215,7 @@ export const paystackWebhook = async (req, res, next) => {
             });
         }
 
+        // 🔹 Handle transfer failure
         if (event.event === "transfer.failed") {
             await NotificationModel.create({
                 user: null,
@@ -317,132 +318,130 @@ export const paystackWebhook = async (req, res, next) => {
 
 export const createPaymentController = async (req, res, next) => {
     try {
-        const { email, amount, method, momo, orderId, chefId } = req.body;
+        const { orderId } = req.body;
 
-        // Get chef's subaccount code if available
-        let subaccountCode = null;
-        if (chefId) {
-            const chef = await UserModel.findById(chefId).select("paystack");
-            subaccountCode = chef?.paystack?.subaccountCode;
+        // 1️⃣ Ensure order exists
+        const order = await Order.findById(orderId).populate("buyer");
+        if (!order) {
+            return res.status(404).json({ message: "Order not found" });
         }
 
-        // 🔎 Call Paystack to initiate payment
-        const paymentData = await initiatePayment({
-            email,
+        // 2️⃣ Check payment status
+        if (order.payment.status === "paid") {
+            return res.status(400).json({ message: "Order already paid" });
+        }
+
+        // 3️⃣ Use trusted values from DB
+        const amount = order.totalPrice;
+        const email = order.buyer?.email;
+        if (!email) {
+            return res.status(400).json({ message: "Buyer email not found" });
+        }
+
+        // 4️⃣ Handle subaccount for chef if present
+        let splitConfig = {};
+        if (order.chef?.paystackSubaccountCode) {
+            splitConfig = { subaccount: order.chef.paystackSubaccountCode };
+        }
+
+        // 5️⃣ Initiate payment with Paystack
+        const paystackResponse = await initiatePayment({
             amount: amount * 100, // Paystack expects kobo
-            method,
-            momo,
-            metadata: {
-                orderId,
-                chefId
-            },
-            subaccount: subaccountCode,
-            bearer: "subaccount"
+            email,
+            reference: `order_${orderId}_${Date.now()}`,
+            ...splitConfig,
         });
 
-        const { reference, authorization_url, access_code } = paymentData.data;
+        // 6️⃣ Update order with payment reference
+        order.payment.reference = paystackResponse.data.reference;
+        await order.save();
 
-        // ✅ Immediately update the order with payment details
-        await MealOrder.findByIdAndUpdate(orderId, {
-            $set: {
-                "payment.reference": reference,
-                "payment.status": "initiated",
-                "payment.method": method,
-                "payment.channel": momo ? "mobile_money" : undefined
-            }
+        // 7️⃣ Notify admin
+        await sendEmail({
+            to: process.env.ADMIN_EMAIL,
+            subject: "New Payment Initiated",
+            text: `Payment initiated for Order ID: ${orderId}`,
         });
 
-        // 🔔 Notify Admin of payment initiation
-        await NotificationModel.create({
-            user: null,
-            title: "🔄 Payment Initiated",
-            body: `New payment initiated for order ${orderId}. Amount: GHS ${amount.toFixed(2)}`,
-            url: `/admin/orders/${orderId}`,
-            type: 'payment'
-        });
-
-        // ✅ Send Paystack details back to frontend
+        // 8️⃣ Respond with Paystack auth URL
         res.json({
-            authorization_url,
-            reference,
-            access_code
+            status: "success",
+            authorizationUrl: paystackResponse.data.authorization_url,
+            reference: paystackResponse.data.reference,
         });
-
     } catch (error) {
-        console.error("Create Payment Error:", error);
-
-        // 🔔 Notify Admin of payment initiation failure
-        await NotificationModel.create({
-            user: null,
-            title: "❌ Payment Initiation Failed",
-            body: `Failed to initiate payment for order ${req.body.orderId}. Error: ${error.message}`,
-            url: "/admin/payments",
-            type: 'payment',
-            priority: 'high'
-        });
-
-        next(error);
+        console.error("Payment initiation error:", error);
+        res.status(500).json({ message: "Payment initiation failed", error: error.message });
     }
 };
 
 
+
 export const verifyPaymentController = async (req, res, next) => {
     try {
-        const { reference } = req.params;
-        const verification = await verifyPayment(reference);
+        const { reference, orderId } = req.body;
 
-        if (verification.data.status === "success") {
-            const order = await MealOrder.findOne({ "payment.reference": reference });
-
-            if (!order) {
-                console.warn(`Verify: No order found for reference ${reference}`);
-            } else if (order.payment.status === "paid") {
-                console.log(`Verify: Order ${order._id} already marked as paid`);
-            } else {
-                order.payment.status = "verified";
-                order.verifiedAt = new Date();
-                await order.save();
-            }
-
-            await NotificationModel.create({
-                user: null,
-                title: "✅ Payment Manually Verified",
-                body: `Payment ${reference} verified successfully.`,
-                url: "/admin/payments",
-                type: "payment",
-            });
-
-            res.json({
-                status: true,
-                message: "Payment verified successfully",
-                data: verification.data,
-            });
-        } else {
-            await NotificationModel.create({
-                user: null,
-                title: "❌ Payment Verification Failed",
-                body: `Manual verification failed for ${reference}. Status: ${verification.data.status}`,
-                url: "/admin/payments",
-                type: "payment",
-            });
-
-            res.json({
-                status: false,
-                message: "Payment not successful",
-                data: verification.data,
-            });
+        if (!reference || !orderId) {
+            return res.status(400).json({ message: "Reference and orderId are required" });
         }
-    } catch (error) {
-        console.error("Verify Payment Error:", error);
-        await NotificationModel.create({
-            user: null,
-            title: "⚠️ Payment Verification Error",
-            body: `Error verifying ${req.params.reference}: ${error.message}`,
-            url: "/admin/payments",
-            type: "payment",
-            priority: "high",
+
+        // 1️⃣ Verify payment from Paystack
+        const verified = await verifyPayment(reference);
+
+        if (!verified?.data) {
+            return res.status(400).json({ message: "Invalid Paystack response" });
+        }
+
+        // 2️⃣ Find order
+        const order = await Order.findById(orderId);
+        if (!order) {
+            return res.status(404).json({ message: "Order not found" });
+        }
+
+        // 3️⃣ Confirm payment status
+        if (verified.data.status !== "success") {
+            return res.status(400).json({ message: "Payment not successful" });
+        }
+
+        // 4️⃣ Confirm amount (convert cedis → pesewas)
+        const expectedAmount = order.totalPrice * 100; // GHS → pesewas
+        if (verified.data.amount !== expectedAmount) {
+            return res.status(400).json({ message: "Payment amount mismatch" });
+        }
+
+        // 5️⃣ Confirm currency is GHS
+        if (verified.data.currency !== "GHS") {
+            return res.status(400).json({ message: "Invalid currency" });
+        }
+
+        // 6️⃣ Update order payment details
+        order.payment.status = "paid";
+        order.payment.transactionId = verified.data.id;       // Paystack transaction ID
+        order.payment.channel = verified.data.channel;        // e.g. card, mobile_money
+        order.payment.paidAt = new Date(verified.data.paid_at);
+        await order.save();
+
+        // 7️⃣ Notify admin
+        await sendEmail({
+            to: process.env.ADMIN_EMAIL,
+            subject: "Payment Verified",
+            text: `Payment for Order ID ${orderId} has been verified successfully.`,
         });
-        next(error);
+
+        res.json({
+            status: "success",
+            message: "Payment verified successfully",
+            data: {
+                reference: verified.data.reference,
+                amount: verified.data.amount,
+                currency: verified.data.currency,
+                channel: verified.data.channel,
+                paidAt: verified.data.paid_at,
+            },
+        });
+    } catch (error) {
+        console.error("Payment verification error:", error);
+        res.status(500).json({ message: "Payment verification failed", error: error.message });
     }
 };
 
