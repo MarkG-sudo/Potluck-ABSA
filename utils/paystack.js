@@ -15,12 +15,12 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
     if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
 
     try {
-        // Convert GHS → pesewa (subunit)
-        const scaledAmount = Math.round(amount * 100);
+        // ✅ FIXED: Only convert once here
+        const scaledAmount = Math.round(amount * 100); // This is the ONLY conversion
 
         const basePayload = {
             email,
-            amount: scaledAmount,
+            amount: scaledAmount, // Now correct: GHS 70 → 7000 pesewas
             currency: "GHS",
             metadata,
             subaccount,
@@ -52,7 +52,6 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
         throw new Error(err.response?.data?.message || "Failed to initiate payment");
     }
 };
-
 
 // ✅ Verify payment
 export const verifyPayment = async (reference) => {
