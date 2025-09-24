@@ -252,27 +252,26 @@ export const createPaymentController = async (req, res, next) => {
 // =======================
 export const verifyPaymentController = async (req, res, next) => {
     try {
-        const { paymentReference } = req.body;
+        const { reference } = req.params; // <- get from URL
 
-        console.log("Verifying payment for reference:", paymentReference);
+        console.log("Verifying payment for reference:", reference);
 
-        if (!paymentReference) {
-            console.error("No paymentReference provided in request body");
-            return res.status(400).json({ message: "paymentReference is required" });
+        if (!reference) {
+            console.error("No reference provided in request params");
+            return res.status(400).json({ message: "Payment reference is required" });
         }
 
-        // ✅ Fetch the order by payment reference
-        const mealOrder = await MealOrder.findOne({ "payment.reference": paymentReference });
+        // Fetch the order
+        const mealOrder = await MealOrder.findOne({ "payment.reference": reference });
         if (!mealOrder) {
-            console.error("No order found for paymentReference:", paymentReference);
+            console.error("No order found for reference:", reference);
             return res.status(404).json({ message: "Order not found" });
         }
 
         console.log("Order fetched for verification:", mealOrder);
 
-        // ✅ Verify payment with Paystack
-        const verified = await verifyPayment(paymentReference);
-
+        // Verify with Paystack
+        const verified = await verifyPayment(reference);
         console.log("Paystack verification response:", verified);
 
         if (!verified || !verified.data) {
@@ -280,7 +279,6 @@ export const verifyPaymentController = async (req, res, next) => {
             return res.status(500).json({ message: "Payment verification failed" });
         }
 
-        // ✅ Check if payment was successful
         if (verified.data.status !== "success") {
             console.warn("Payment not successful:", verified.data);
             mealOrder.payment.status = "failed";
@@ -288,7 +286,6 @@ export const verifyPaymentController = async (req, res, next) => {
             return res.status(400).json({ message: "Payment not successful" });
         }
 
-        // ✅ Amount check to prevent tampering
         if (verified.data.amount !== mealOrder.totalPrice * 100) {
             console.error(
                 "Payment amount mismatch. Expected:",
@@ -299,9 +296,9 @@ export const verifyPaymentController = async (req, res, next) => {
             return res.status(400).json({ message: "Payment amount mismatch" });
         }
 
-        // ✅ Update order as paid
+        // Update as paid
         mealOrder.payment.status = "paid";
-        mealOrder.payment.transactionId = verified.data.id; // Paystack transaction ID
+        mealOrder.payment.transactionId = verified.data.id;
         mealOrder.paidAt = new Date();
         await mealOrder.save();
 
@@ -316,6 +313,7 @@ export const verifyPaymentController = async (req, res, next) => {
         return res.status(500).json({ message: "Internal server error", error: error.message });
     }
 };
+
 
 
 

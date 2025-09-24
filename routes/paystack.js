@@ -21,7 +21,7 @@ paystackRouter.post(
 // paystackRouter.post("/initiate-payout", isAuthenticated, hasPermission("manage_payouts"), initiatePayoutController);
 
 // ✅ Route 2: For your PWA to verify a payment immediately after redirect
-paystackRouter.get("/verify-payment/:reference", verifyPaymentController);
+paystackRouter.get("/verify-payment/:reference", isAuthenticated, verifyPaymentController);
 
 
 
