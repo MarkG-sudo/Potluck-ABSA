@@ -15,7 +15,8 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
     if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
 
     try {
-        const scaledAmount = Math.round(amount * 100); // GHS → pesewas
+        // Convert GHS → pesewa (subunit)
+        const scaledAmount = Math.round(amount * 100);
 
         const basePayload = {
             email,
@@ -45,7 +46,7 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
             });
         }
 
-        return res.data; // ✅ always return full Paystack response
+        return res.data;
     } catch (err) {
         console.error("initiatePayment error:", err.response?.data || err.message);
         throw new Error(err.response?.data?.message || "Failed to initiate payment");
