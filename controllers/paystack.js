@@ -170,7 +170,9 @@ export const paystackWebhook = async (req, res, next) => {
     }
 };
 
-
+// =======================
+// CREATE PAYMENT
+// =======================
 export const createPaymentController = async (req, res, next) => {
     try {
         const { orderId, method, momo } = req.body;
@@ -179,186 +181,313 @@ export const createPaymentController = async (req, res, next) => {
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
         if (!user) return res.status(404).json({ message: "User not found" });
 
-        // ✅ Fetch meal order with full population
-        const mealOrder = await MealOrder.findById(orderId)
-            .populate("buyer", "firstName lastName email")
-            .populate("chef", "firstName lastName email paystack")
-            .populate("meal", "mealName price");
+        // ✅ Fetch order
+        const order = await MealOrder.findById(orderId).populate("meal chef buyer");
+        if (!order) return res.status(404).json({ message: "Order not found" });
 
-        if (!mealOrder) return res.status(404).json({ message: "Order not found" });
-        if (mealOrder.payment.status === "paid") {
+        if (order.payment.status === "paid") {
             return res.status(400).json({ message: "Order already paid" });
         }
 
-        // ✅ Use pre-generated reference or generate inline
-        const reference = mealOrder.payment.reference || `ORD_${crypto.randomBytes(6).toString("hex")}_${Date.now()}`;
-        mealOrder.payment.reference = reference;
-        mealOrder.payment.method = method || mealOrder.payment.method;
-        await mealOrder.save();
+        // ✅ Ensure payment reference exists
+        if (!order.payment.reference) {
+            order.payment.reference = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            await order.save();
+        }
 
-        // ✅ Prepare metadata
-        const metadata = {
-            orderId: mealOrder._id.toString(),
-            buyerId: user._id.toString(),
-            chefId: mealOrder.chef?._id?.toString(),
-            paymentMethod: method,
-            reference,
+        // ✅ Initiate payment with Paystack
+        const paymentPayload = {
+            email: user.email,
+            amount: order.totalPrice * 100, // Paystack expects kobo
+            reference: order.payment.reference,
+            callback_url: `${process.env.BASE_URL}/api/paystack/verify`,
+            metadata: {
+                orderId: order._id.toString(),
+                buyerId: user._id.toString(),
+                chefId: order.chef._id.toString(),
+                paymentMethod: method
+            },
+            ...(method === "momo" && momo ? { mobile_money: momo } : {})
         };
 
-        // ✅ Initiate Paystack payment
-        const amount = mealOrder.totalPrice;
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ message: "Invalid order amount" });
-        }
+        const paystackResponse = await initiatePayment(paymentPayload);
 
-        const subaccount = mealOrder.chef?.paystack?.subaccountCode || undefined;
-
-        const response = await initiatePayment({
-            email: user.email,
-            amount,
-            metadata,
-            method,
-            momo,
-            subaccount,
+        // ✅ Respond with authorization URL
+        res.status(200).json({
+            message: "Payment initiated",
+            authorizationUrl: paystackResponse.data.authorization_url,
+            reference: order.payment.reference
         });
 
-        const psData = response?.data;
-        if (!psData) {
-            throw new Error("Unexpected Paystack response shape");
-        }
-
-        // ✅ Log notification
+        // ✅ Optional: save notification for payment initiated
         await NotificationModel.create({
-            user: null,
-            title: "🔄 Payment Initiated",
-            body: `Payment initiated for order ${mealOrder._id}. Amount: GHS ${amount}`,
-            url: `/admin/orders/${mealOrder._id}`,
-            type: "payment",
+            user: order.buyer._id,
+            title: "Payment Initiated",
+            message: `Payment for your order ${order._id} has been initiated.`,
+            data: { orderId: order._id.toString() }
         });
-
-        return res.status(200).json({
-            status: "success",
-            authorizationUrl: psData.authorization_url,
-            reference: mealOrder.payment.reference,
-            metadata,
-        });
-
-    } catch (err) {
-        console.error("createPaymentController error:", err.response?.data || err.message);
-        return res.status(500).json({
-            message: "Payment initiation failed",
-            error: err.response?.data?.message || err.message,
-        });
+    } catch (error) {
+        next(error);
     }
 };
 
-
-
+// =======================
+// VERIFY PAYMENT
+// =======================
 export const verifyPaymentController = async (req, res, next) => {
     try {
-        const { reference, orderId } = req.body;
-        if (!reference || !orderId) {
-            return res.status(400).json({ message: "Reference and orderId are required" });
+        const { reference } = req.body;
+
+        // ✅ Fetch order by reference
+        const order = await MealOrder.findOne({ "payment.reference": reference }).populate("meal chef buyer");
+        if (!order) return res.status(404).json({ message: "Order not found" });
+
+        if (order.payment.status === "paid") {
+            return res.status(400).json({ message: "Order already verified" });
         }
 
+        // ✅ Verify payment with Paystack
         const verified = await verifyPayment(reference);
-        const ps = verified?.data;
-        if (!ps) {
-            return res.status(400).json({ message: "Invalid Paystack response" });
+
+        if (verified.status !== "success") {
+            return res.status(400).json({ message: "Payment not successful" });
         }
 
-        const mealOrder = await MealOrder.findById(orderId).populate("buyer chef meal");
-        if (!mealOrder) return res.status(404).json({ message: "Order not found" });
-
-        if (ps.status !== "success") {
-            return res.status(400).json({ message: "Payment not successful", details: ps });
+        if (verified.data.amount !== order.totalPrice * 100) {
+            return res.status(400).json({ message: "Payment amount mismatch" });
         }
 
-        const expectedAmount = Math.round(mealOrder.totalPrice * 100);
-        if (ps.amount !== expectedAmount) {
-            return res.status(400).json({
-                message: "Payment amount mismatch",
-                expected: expectedAmount,
-                got: ps.amount,
-            });
-        }
+        // ✅ Update order payment
+        order.payment.status = "paid";
+        order.payment.transactionId = verified.data.id; // Paystack transaction ID
+        await order.save();
 
-        if (ps.currency !== "GHS") {
-            return res.status(400).json({ message: "Invalid currency", got: ps.currency });
-        }
-
-        if (mealOrder.payment.status === "paid") {
-            return res.status(200).json({ message: "Order already marked paid" });
-        }
-
-        // ✅ Update payment details but **do not overwrite reference if pre-set**
-        mealOrder.payment.status = "paid";
-        mealOrder.payment.transactionId = ps.id;
-        mealOrder.payment.channel = ps.channel;
-        mealOrder.payment.paidAt = ps.paid_at ? new Date(ps.paid_at) : new Date();
-        mealOrder.payment.reference = mealOrder.payment.reference || ps.reference;
-
-        const commission = mealOrder.totalPrice * 0.15;
-        mealOrder.commission = commission;
-        mealOrder.vendorEarnings = mealOrder.totalPrice - commission;
-
-        await mealOrder.save();
-
-        // 🔔 Notifications
-        try {
-            await sendUserNotification(mealOrder.chef._id, {
-                title: "💰 New Paid Order",
-                body: `Order ${mealOrder._id} has been paid.`,
-                url: `/dashboard/orders/${mealOrder._id}`,
-            });
-            await sendUserNotification(mealOrder.buyer._id, {
-                title: "✅ Payment Confirmed",
-                body: `Your payment for Order ${mealOrder._id} was successful.`,
-                url: `/dashboard/my-orders/${mealOrder._id}`,
-            });
-        } catch (pushErr) {
-            console.warn("Push notification failed:", pushErr?.message || pushErr);
-        }
-
-        // 📧 Email
-        try {
-            await mailtransporter.sendMail({
-                from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-                to: mealOrder.buyer.email,
-                subject: "Payment Receipt",
-                html: `<p>Hi ${mealOrder.buyer.firstName}, your payment for order ${mealOrder._id} was successful.</p>`,
-            });
-        } catch (mailErr) {
-            console.warn("Buyer email failed:", mailErr?.message || mailErr);
-        }
-
-        await NotificationModel.create({
-            user: null,
-            title: "✅ Payment Verified",
-            body: `Payment for order ${mealOrder._id} verified. Amount: GHS ${mealOrder.totalPrice}`,
-            url: `/admin/orders/${mealOrder._id}`,
-            type: "payment",
-        });
-
-        return res.status(200).json({
-            status: "success",
-            message: "Payment verified successfully",
-            data: {
-                reference: mealOrder.payment.reference,
-                amount: ps.amount / 100,
-                currency: ps.currency,
-                channel: ps.channel,
-                paidAt: ps.paid_at,
+        // ✅ Send notifications
+        await NotificationModel.create([
+            {
+                user: order.buyer._id,
+                title: "Payment Successful",
+                message: `Your payment for order ${order._id} was successful.`,
+                data: { orderId: order._id.toString() }
             },
+            {
+                user: order.chef._id,
+                title: "New Order Paid",
+                message: `Order ${order._id} has been paid by the buyer.`,
+                data: { orderId: order._id.toString() }
+            }
+        ]);
+
+        res.status(200).json({
+            message: "Payment verified successfully",
+            order
         });
-    } catch (err) {
-        console.error("verifyPaymentController error:", err.response?.data || err.message);
-        return res.status(500).json({
-            message: "Payment verification failed",
-            error: err.response?.data?.message || err.message,
-        });
+    } catch (error) {
+        next(error);
     }
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// export const createPaymentController = async (req, res, next) => {
+//     try {
+//         const { orderId, method, momo } = req.body;
+
+//         // ✅ Fetch user
+//         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
+//         if (!user) return res.status(404).json({ message: "User not found" });
+
+//         // ✅ Fetch meal order with full population
+//         const mealOrder = await MealOrder.findById(orderId)
+//             .populate("buyer", "firstName lastName email")
+//             .populate("chef", "firstName lastName email paystack")
+//             .populate("meal", "mealName price");
+
+//         if (!mealOrder) return res.status(404).json({ message: "Order not found" });
+//         if (mealOrder.payment.status === "paid") {
+//             return res.status(400).json({ message: "Order already paid" });
+//         }
+
+//         // ✅ Use pre-generated reference or generate inline
+//         const reference = mealOrder.payment.reference || `ORD_${crypto.randomBytes(6).toString("hex")}_${Date.now()}`;
+//         mealOrder.payment.reference = reference;
+//         mealOrder.payment.method = method || mealOrder.payment.method;
+//         await mealOrder.save();
+
+//         // ✅ Prepare metadata
+//         const metadata = {
+//             orderId: mealOrder._id.toString(),
+//             buyerId: user._id.toString(),
+//             chefId: mealOrder.chef?._id?.toString(),
+//             paymentMethod: method,
+//             reference,
+//         };
+
+//         // ✅ Initiate Paystack payment
+//         const amount = mealOrder.totalPrice;
+//         if (!amount || amount <= 0) {
+//             return res.status(400).json({ message: "Invalid order amount" });
+//         }
+
+//         const subaccount = mealOrder.chef?.paystack?.subaccountCode || undefined;
+
+//         const response = await initiatePayment({
+//             email: user.email,
+//             amount,
+//             metadata,
+//             method,
+//             momo,
+//             subaccount,
+//         });
+
+//         const psData = response?.data;
+//         if (!psData) {
+//             throw new Error("Unexpected Paystack response shape");
+//         }
+
+//         // ✅ Log notification
+//         await NotificationModel.create({
+//             user: null,
+//             title: "🔄 Payment Initiated",
+//             body: `Payment initiated for order ${mealOrder._id}. Amount: GHS ${amount}`,
+//             url: `/admin/orders/${mealOrder._id}`,
+//             type: "payment",
+//         });
+
+//         return res.status(200).json({
+//             status: "success",
+//             authorizationUrl: psData.authorization_url,
+//             reference: mealOrder.payment.reference,
+//             metadata,
+//         });
+
+//     } catch (err) {
+//         console.error("createPaymentController error:", err.response?.data || err.message);
+//         return res.status(500).json({
+//             message: "Payment initiation failed",
+//             error: err.response?.data?.message || err.message,
+//         });
+//     }
+// };
+
+
+
+// export const verifyPaymentController = async (req, res, next) => {
+//     try {
+//         const { reference, orderId } = req.body;
+//         if (!reference || !orderId) {
+//             return res.status(400).json({ message: "Reference and orderId are required" });
+//         }
+
+//         const verified = await verifyPayment(reference);
+//         const ps = verified?.data;
+//         if (!ps) {
+//             return res.status(400).json({ message: "Invalid Paystack response" });
+//         }
+
+//         const mealOrder = await MealOrder.findById(orderId).populate("buyer chef meal");
+//         if (!mealOrder) return res.status(404).json({ message: "Order not found" });
+
+//         if (ps.status !== "success") {
+//             return res.status(400).json({ message: "Payment not successful", details: ps });
+//         }
+
+//         const expectedAmount = Math.round(mealOrder.totalPrice * 100);
+//         if (ps.amount !== expectedAmount) {
+//             return res.status(400).json({
+//                 message: "Payment amount mismatch",
+//                 expected: expectedAmount,
+//                 got: ps.amount,
+//             });
+//         }
+
+//         if (ps.currency !== "GHS") {
+//             return res.status(400).json({ message: "Invalid currency", got: ps.currency });
+//         }
+
+//         if (mealOrder.payment.status === "paid") {
+//             return res.status(200).json({ message: "Order already marked paid" });
+//         }
+
+//         // ✅ Update payment details but **do not overwrite reference if pre-set**
+//         mealOrder.payment.status = "paid";
+//         mealOrder.payment.transactionId = ps.id;
+//         mealOrder.payment.channel = ps.channel;
+//         mealOrder.payment.paidAt = ps.paid_at ? new Date(ps.paid_at) : new Date();
+//         mealOrder.payment.reference = mealOrder.payment.reference || ps.reference;
+
+//         const commission = mealOrder.totalPrice * 0.15;
+//         mealOrder.commission = commission;
+//         mealOrder.vendorEarnings = mealOrder.totalPrice - commission;
+
+//         await mealOrder.save();
+
+//         // 🔔 Notifications
+//         try {
+//             await sendUserNotification(mealOrder.chef._id, {
+//                 title: "💰 New Paid Order",
+//                 body: `Order ${mealOrder._id} has been paid.`,
+//                 url: `/dashboard/orders/${mealOrder._id}`,
+//             });
+//             await sendUserNotification(mealOrder.buyer._id, {
+//                 title: "✅ Payment Confirmed",
+//                 body: `Your payment for Order ${mealOrder._id} was successful.`,
+//                 url: `/dashboard/my-orders/${mealOrder._id}`,
+//             });
+//         } catch (pushErr) {
+//             console.warn("Push notification failed:", pushErr?.message || pushErr);
+//         }
+
+//         // 📧 Email
+//         try {
+//             await mailtransporter.sendMail({
+//                 from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+//                 to: mealOrder.buyer.email,
+//                 subject: "Payment Receipt",
+//                 html: `<p>Hi ${mealOrder.buyer.firstName}, your payment for order ${mealOrder._id} was successful.</p>`,
+//             });
+//         } catch (mailErr) {
+//             console.warn("Buyer email failed:", mailErr?.message || mailErr);
+//         }
+
+//         await NotificationModel.create({
+//             user: null,
+//             title: "✅ Payment Verified",
+//             body: `Payment for order ${mealOrder._id} verified. Amount: GHS ${mealOrder.totalPrice}`,
+//             url: `/admin/orders/${mealOrder._id}`,
+//             type: "payment",
+//         });
+
+//         return res.status(200).json({
+//             status: "success",
+//             message: "Payment verified successfully",
+//             data: {
+//                 reference: mealOrder.payment.reference,
+//                 amount: ps.amount / 100,
+//                 currency: ps.currency,
+//                 channel: ps.channel,
+//                 paidAt: ps.paid_at,
+//             },
+//         });
+//     } catch (err) {
+//         console.error("verifyPaymentController error:", err.response?.data || err.message);
+//         return res.status(500).json({
+//             message: "Payment verification failed",
+//             error: err.response?.data?.message || err.message,
+//         });
+//     }
+// };
 
 
 // export const createPaymentController = async (req, res, next) => {
