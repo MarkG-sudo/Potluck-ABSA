@@ -92,13 +92,23 @@ export const placeOrder = async (req, res, next) => {
 
 export const getMyOrders = async (req, res, next) => {
     try {
-        const { error, value } = orderQueryValidator.validate(req.query);
-        if (error) return res.status(400).json({ error: error.details.map(d => d.message) });
+        // 1️⃣ Extract query parameters with defaults
+        const {
+            page = 1,
+            limit = 10,
+            sortBy = "createdAt",
+            sortOrder = "desc",
+            status,
+            from,
+            to
+        } = req.query;
 
-        const { page, limit, sortBy, sortOrder, status, from, to } = value;
         const skip = (page - 1) * limit;
 
+        // 2️⃣ Build filter for current user's orders only
         const filter = { buyer: req.auth.id };
+
+        // Add optional filters
         if (status) filter.status = status;
         if (from || to) {
             filter.createdAt = {};
@@ -106,23 +116,32 @@ export const getMyOrders = async (req, res, next) => {
             if (to) filter.createdAt.$lte = new Date(to);
         }
 
+        // 3️⃣ Fetch orders with pagination and sorting
         const orders = await MealOrder.find(filter)
-            .populate("meal", "title price photos")
+            .populate("meal", "title price photos mealName") // Added mealName since it's used in placeOrder
+            .populate("chef", "firstName lastName email") // Populate chef info like in placeOrder
             .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
             .skip(skip)
-            .limit(limit)
+            .limit(parseInt(limit))
             .lean();
 
+        // 4️⃣ Get total count for pagination
         const total = await MealOrder.countDocuments(filter);
 
+        // 5️⃣ Respond with structured data
         res.json({
-            page,
-            totalPages: Math.ceil(total / limit),
-            total,
-            orders
+            message: "Orders retrieved successfully",
+            data: {
+                page: parseInt(page),
+                totalPages: Math.ceil(total / limit),
+                totalOrders: total,
+                orders
+            }
         });
-    } catch (err) {
-        next(err);
+
+    } catch (error) {
+        console.error("Get My Orders Error:", error);
+        next(error);
     }
 };
 
