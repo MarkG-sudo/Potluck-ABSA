@@ -177,47 +177,60 @@ export const createPaymentController = async (req, res, next) => {
     try {
         const { orderId, method, momo } = req.body;
 
+        console.log("Incoming request body:", req.body);
+
         // ✅ Fetch user
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
-        if (!user) return res.status(404).json({ message: "User not found" });
+        if (!user) {
+            console.error("User not found for ID:", req.auth.id);
+            return res.status(404).json({ message: "User not found" });
+        }
 
         // ✅ Fetch order
-        const order = await MealOrder.findById(orderId);
-        if (!order) return res.status(404).json({ message: "Order not found" });
-
-        // ✅ Initiate payment via Paystack
-        const verified = await verifyPayment(order.payment.reference);
-
-        // ✅ Safety check for Paystack response
-        if (!verified || !verified.data) {
-            console.log("Paystack verification failed:", verified);
-            return res.status(400).json({ message: "Payment verification failed or returned unexpected data" });
+        const mealOrder = await MealOrder.findById(orderId);
+        if (!mealOrder) {
+            console.error("Meal order not found for ID:", orderId);
+            return res.status(404).json({ message: "Order not found" });
         }
 
-        // ✅ Optional: check amount matches
-        if (verified.data.amount !== order.totalPrice * 100) {
-            return res.status(400).json({ message: "Payment amount mismatch" });
-        }
+        console.log("Meal order fetched:", mealOrder);
 
-        // ✅ Update order payment details safely
-        if (!order.payment) order.payment = {};
-        order.payment.status = "paid";
-        order.payment.transactionId = verified.data.id || null;
+        // Prepare amount (Paystack expects amount in kobo)
+        const amount = mealOrder.totalPrice * 100;
+        console.log("Amount to pay (kobo):", amount);
 
-        await order.save();
-
-        return res.status(200).json({
-            message: "Payment successful and order updated",
-            order,
-            verifiedData: verified.data // optional for debugging
+        // Initiate payment
+        const paymentResponse = await initiatePayment({
+            amount,
+            email: user.email,
+            method: method || "card",
+            reference: mealOrder.payment.reference,
+            momo
         });
 
+        console.log("Payment initiation response:", paymentResponse);
+
+        if (!paymentResponse || !paymentResponse.data || !paymentResponse.data.reference) {
+            console.error("Payment initiation failed or missing reference:", paymentResponse);
+            return res.status(500).json({ message: "Failed to initiate payment" });
+        }
+
+        // ✅ Save reference if needed
+        mealOrder.payment.reference = paymentResponse.data.reference;
+        await mealOrder.save();
+
+        console.log("Updated meal order with payment reference:", mealOrder.payment);
+
+        return res.status(200).json({
+            message: "Payment initiated successfully",
+            paymentReference: paymentResponse.data.reference,
+            order: mealOrder
+        });
     } catch (error) {
         console.error("Error in createPaymentController:", error);
-        return res.status(500).json({ message: "Internal server error", error: error.message });
+        return res.status(500).json({ message: "Internal server error" });
     }
 };
-
 // =======================
 // VERIFY PAYMENT
 // =======================
