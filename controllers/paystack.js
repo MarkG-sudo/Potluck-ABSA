@@ -175,13 +175,13 @@ export const paystackWebhook = async (req, res, next) => {
 // =======================
 export const createPaymentController = async (req, res, next) => {
     try {
-        const { orderId, method } = req.body;
+        const { orderId, method, momo } = req.body;
 
-        // ✅ Fetch user
+        // Fetch user
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
         if (!user) return res.status(404).json({ message: "User not found" });
 
-        // ✅ Fetch order
+        // Fetch order
         const mealOrder = await MealOrder.findById(orderId)
             .populate("buyer", "firstName lastName email")
             .populate("chef", "firstName lastName email paystack")
@@ -189,106 +189,64 @@ export const createPaymentController = async (req, res, next) => {
 
         if (!mealOrder) return res.status(404).json({ message: "Order not found" });
 
-        // Prevent double payments
-        if (mealOrder.payment.status === "paid") {
-            return res.status(400).json({ message: "Order already paid" });
+        console.log("💡 Meal Order fetched:", mealOrder);
+
+        // Initiate payment
+        let paymentResponse;
+        try {
+            paymentResponse = await initiatePayment({
+                amount: mealOrder.totalPrice * 100,
+                email: user.email,
+                reference: `ORD_${Date.now()}_${orderId}`,
+                method,
+                momo,
+            });
+        } catch (payErr) {
+            console.error("❌ Paystack initiation error:", payErr?.response?.data || payErr?.message || payErr);
+            return res.status(500).json({ message: "Payment initiation failed", error: payErr?.message || payErr });
         }
 
-        // ✅ Initiate verification with Paystack
-        const reference = mealOrder.payment.reference;
-        const verified = await verifyPayment(reference);
+        console.log("💡 Paystack initiate response:", JSON.stringify(paymentResponse, null, 2));
 
-        console.log("✅ Paystack verify response:", verified);
-
-        if (!verified || !verified.data) {
-            console.error("❌ Paystack verification failed or returned unexpected data");
-            return res.status(400).json({ message: "Payment verification failed" });
+        // Safe check for payment response
+        if (!paymentResponse?.data?.reference) {
+            console.error("❌ Paystack initiate returned invalid response!", paymentResponse);
+            return res.status(500).json({ message: "Payment initiation failed" });
         }
 
-        const ps = verified.data;
+        const reference = paymentResponse.data.reference;
 
-        if (ps.status !== "success") {
-            return res.status(400).json({ message: "Payment not successful" });
-        }
+        // Save payment reference safely
+        mealOrder.payment = mealOrder.payment || {};
+        mealOrder.payment.method = method;
+        mealOrder.payment.status = "pending";
+        mealOrder.payment.reference = reference;
 
-        // ✅ Double-check amount
-        if (ps.amount !== mealOrder.totalPrice * 100) {
-            console.error(`⚠ Payment amount mismatch: expected ${mealOrder.totalPrice}, got ${ps.amount / 100}`);
-            return res.status(400).json({ message: "Payment amount mismatch" });
-        }
-
-        // ✅ Double-check email
-        if (ps.customer.email !== mealOrder.buyer.email) {
-            console.error(`⚠ Payment email mismatch: Paystack ${ps.customer.email}, Expected ${mealOrder.buyer.email}`);
-            return res.status(400).json({ message: "Payment email mismatch" });
-        }
-
-        // ✅ Update order
-        mealOrder.payment.status = "paid";
-        mealOrder.payment.transactionId = ps.id;
-        mealOrder.payment.channel = ps.channel;
-        mealOrder.paidAt = new Date();
-
-        const commission = mealOrder.totalPrice * 0.15;
-        mealOrder.commission = commission;
-        mealOrder.vendorEarnings = mealOrder.totalPrice - commission;
+        // 🔍 DEBUG LOG: show side-by-side comparison
+        console.log("💾 Preparing to save payment info:");
+        console.log("Order ID:", mealOrder._id);
+        console.log("Payment object to save:", mealOrder.payment);
+        console.log("Paystack reference:", reference);
 
         await mealOrder.save();
-        console.log(`✅ Order ${mealOrder._id} marked as paid.`);
+        console.log("✅ Payment reference saved in order:", mealOrder.payment);
 
-        // 🔔 Push notifications
-        try {
-            await sendUserNotification(mealOrder.chef._id, {
-                title: "💰 New Paid Order",
-                body: `Order ${mealOrder._id} has been paid.`,
-                url: `/dashboard/orders/${mealOrder._id}`,
-            });
-            await sendUserNotification(mealOrder.buyer._id, {
-                title: "✅ Payment Confirmed",
-                body: `Your payment for Order ${mealOrder._id} was successful.`,
-                url: `/dashboard/my-orders/${mealOrder._id}`,
-            });
-        } catch (pushErr) {
-            console.warn("Push notification failed:", pushErr?.message || pushErr);
-        }
-
-        // 📧 Emails
-        try {
-            await mailtransporter.sendMail({
-                from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-                to: mealOrder.buyer.email,
-                subject: "Payment Receipt",
-                html: `<p>Hi ${mealOrder.buyer.firstName}, your payment for order ${mealOrder._id} was successful.</p>`,
-            });
-            await mailtransporter.sendMail({
-                from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-                to: mealOrder.chef.email,
-                subject: "New Order Payment Received",
-                html: `<p>Hi ${mealOrder.chef.firstName}, you just received a new paid order #${mealOrder._id}.</p>`,
-            });
-        } catch (mailErr) {
-            console.warn("Email sending failed:", mailErr?.message || mailErr);
-        }
-
-        // Admin notification
-        await NotificationModel.create({
-            user: null,
-            title: "💰 Payment Received",
-            body: `Order #${mealOrder._id} paid successfully. Amount: GHS ${mealOrder.totalPrice}, Commission: GHS ${commission}`,
-            url: `/admin/orders/${mealOrder._id}`,
-            type: "payment",
-        });
-
-        return res.status(200).json({
-            message: "Payment verified and order updated successfully",
+        res.status(200).json({
+            message: "Payment initiated successfully",
             order: mealOrder,
+            paymentReference: reference,
         });
 
     } catch (err) {
-        console.error("Error in createPaymentController:", err);
-        return res.status(500).json({ message: "Internal server error", error: err.message });
+        console.error("❌ Error in createPaymentController:", err);
+        next(err);
     }
 };
+
+
+
+
+
 // =======================
 // VERIFY PAYMENT
 // =======================
