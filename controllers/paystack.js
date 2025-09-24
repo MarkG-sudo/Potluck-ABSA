@@ -426,7 +426,7 @@ export const verifyPaymentController = async (req, res, next) => {
             return res.status(400).json({ message: "paymentReference is required" });
         }
 
-        console.log("Verifying payment for reference:", paymentReference);
+        console.log("🔹 Verifying payment for reference:", paymentReference);
 
         // ✅ Fetch the order with this payment reference
         const order = await MealOrder.findOne({ "payment.reference": paymentReference })
@@ -438,22 +438,26 @@ export const verifyPaymentController = async (req, res, next) => {
             return res.status(404).json({ message: "Order not found for this reference" });
         }
 
-        console.log("Order fetched for verification:", order);
+        console.log("🔹 Order fetched for verification:", order);
 
         // ✅ Verify payment with Paystack
         const verified = await verifyPayment(paymentReference);
 
-        console.log("Paystack verification response:", verified);
+        console.log("🔹 Paystack verification response:", verified);
 
         if (!verified?.status || verified.data.status !== "success") {
             return res.status(400).json({ message: "Payment verification failed", data: verified });
         }
 
-        // ✅ Check amount matches (Paystack sends amount in kobo/pesewas)
-        const expectedAmount = Math.round(order.totalPrice * 100);
-        if (verified.data.amount !== expectedAmount) {
+        // ✅ Correct units: Paystack sends amount in kobo/pesewas → convert to GHS
+        const expectedAmount = order.totalPrice;
+        const receivedAmount = verified.data.amount / 100;
+
+        console.log(`🔹 Payment amounts → Expected: GHS ${expectedAmount}, Received: GHS ${receivedAmount}`);
+
+        if (receivedAmount !== expectedAmount) {
             return res.status(400).json({
-                message: `Payment amount mismatch. Expected: ${expectedAmount / 100} Received: ${verified.data.amount / 100}`,
+                message: `Payment amount mismatch. Expected: GHS ${expectedAmount} Received: GHS ${receivedAmount}`,
             });
         }
 
@@ -463,7 +467,7 @@ export const verifyPaymentController = async (req, res, next) => {
         order.paidAt = new Date(verified.data.paidAt || Date.now());
         await order.save();
 
-        console.log("Order updated after successful payment:", order);
+        console.log("✅ Order updated after successful payment:", order);
 
         return res.status(200).json({
             message: "Payment verified successfully",
@@ -472,10 +476,11 @@ export const verifyPaymentController = async (req, res, next) => {
         });
 
     } catch (err) {
-        console.error("Error in verifyPaymentController:", err);
+        console.error("❌ Error in verifyPaymentController:", err);
         next(err);
     }
 };
+
 
 
 
