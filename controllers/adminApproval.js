@@ -1,5 +1,5 @@
 import { UserModel } from "../models/users.js";
-import { mailtransporter } from "../utils/mail.js";
+import { sendEmail } from "../utils/mail.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -47,7 +47,7 @@ export const approveUser = async (req, res, next) => {
                 let html = fs.readFileSync(emailTemplatePath, "utf-8");
                 html = html.replace(/{{firstName}}/g, user.firstName);
 
-                await mailtransporter.sendMail({
+                await sendEmail({
                     from: '"Potluck" <no-reply@potluck.app>',
                     to: user.email,
                     subject: "✅ Your Potluck account is approved!",
@@ -72,7 +72,7 @@ export const approveUser = async (req, res, next) => {
                 html = html.replace(/{{firstName}}/g, user.firstName)
                     .replace(/{{notes}}/g, notes || "No reason provided");
 
-                await mailtransporter.sendMail({
+                await sendEmail({
                     from: '"Potluck" <no-reply@potluck.app>',
                     to: user.email,
                     subject: "❌ Your Potluck account application",

@@ -1,7 +1,7 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { UserModel } from "../models/users.js";
-import { mailtransporter } from "../utils/mail.js";
+import { sendEmail } from "../utils/mail.js";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -57,7 +57,7 @@ passport.use(new GoogleStrategy({
             if (fs.existsSync(templatePath)) {
                 let html = fs.readFileSync(templatePath, "utf-8");
                 html = html.replace(/{{firstName}}/g, user.firstName);
-                await mailtransporter.sendMail({
+                await sendEmail({
                     from: '"Potluck" <no-reply@potluck.app>',
                     to: user.email,
                     subject: "Welcome to Potluck 🎉",

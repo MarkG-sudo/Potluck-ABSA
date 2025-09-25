@@ -3,7 +3,7 @@ import { initiatePayment, verifyPayment } from "../utils/paystack.js";
 import { MealOrder } from "../models/mealOrder.js";
 import { UserModel } from "../models/users.js";
 import { NotificationModel } from "../models/notifications.js";
-import { mailtransporter } from "../utils/mail.js";
+import { sendEmail } from "../utils/mail.js";
 import { sendUserNotification } from "../utils/push.js";
 
 export const paystackWebhook = async (req, res, next) => {
@@ -196,7 +196,7 @@ const sendPaymentSuccessNotifications = async (order) => {
         // 📧 Email to Buyer
         if (isValidEmail(order.buyer.email)) {
             try {
-                await mailtransporter.sendMail({
+                await sendEmail({
                     from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
                     to: order.buyer.email,
                     subject: `✅ Payment Receipt - Order #${shortId}`,
@@ -213,7 +213,7 @@ const sendPaymentSuccessNotifications = async (order) => {
         // 📧 Email to Chef - CRITICAL: This is what sends to the chef
         if (isValidEmail(order.chef.email)) {
             try {
-                await mailtransporter.sendMail({
+                await sendEmail({
                     from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
                     to: order.chef.email,
                     subject: `💰 New Paid Order - #${shortId}`,
@@ -280,7 +280,7 @@ const sendPaymentFailedNotifications = async (order, ps) => {
         });
 
         // 📧 Email to buyer
-        await mailtransporter.sendMail({
+        await sendEmail({
             from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
             to: order.buyer.email,
             subject: "Payment Failed - Order On Hold",

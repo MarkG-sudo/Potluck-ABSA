@@ -2,7 +2,7 @@ import { UserModel } from "../models/users.js";
 import { registerUserValidator, loginUserValidator, updateUserValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { mailtransporter } from "../utils/mail.js";
+import { sendEmail } from "../utils/mail.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -309,7 +309,7 @@ export const registerUser = async (req, res) => {
             // sanitize / replace placeholder
             userEmailHTML = userEmailHTML.replace(/{{firstName}}/g, firstName || "");
 
-            await mailtransporter.sendMail({
+            await sendEmail({
                 from: '"Potluck" <no-reply@potluck.app>',
                 to: email,
                 subject: role === "potlucky"
@@ -335,7 +335,7 @@ export const registerUser = async (req, res) => {
                     .replace(/{{phone}}/g, phone || "Not Provided")
                     .replace(/{{role}}/g, role);
 
-                await mailtransporter.sendMail({
+                await sendEmail({
                     from: '"Potluck Notifications" <no-reply@potluck.app>',
                     to: ADMIN_EMAIL,
                     subject: `New ${role} account pending approval`,
