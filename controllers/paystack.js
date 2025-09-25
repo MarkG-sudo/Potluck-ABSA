@@ -6,7 +6,6 @@ import { NotificationModel } from "../models/notifications.js";
 import { mailtransporter } from "../utils/mail.js";
 import { sendUserNotification } from "../utils/push.js";
 
-
 export const paystackWebhook = async (req, res, next) => {
     try {
         const rawBody = req.rawBody || JSON.stringify(req.body);
@@ -29,109 +28,62 @@ export const paystackWebhook = async (req, res, next) => {
         }
 
         const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
+        const reference = event.data?.reference;
 
-        // 🔹 Handle charge success - USE EVENT DATA DIRECTLY (CRITICAL FIX)
+        console.log(`🔔 Webhook received: ${event.event} for reference: ${reference}`);
+
+        // 🔹 Handle successful payment
         if (event.event === "charge.success" && event.data.status === "success") {
-            const reference = event.data.reference;
-            const ps = event.data; // ✅ Use webhook data directly - NO re-verification!
-
+            const ps = event.data;
             const order = await MealOrder.findOne({ "payment.reference": reference })
                 .populate("buyer", "firstName lastName email")
                 .populate("chef", "firstName lastName email paystack")
                 .populate("meal", "mealName price");
 
             if (order && order.payment.status !== "paid") {
-                // ✅ Amount check (GHS → pesewa)
+                // ✅ Security checks
                 const expectedAmount = Math.round(order.totalPrice * 100);
                 if (ps.amount !== expectedAmount) {
                     console.error(`⚠ Payment amount mismatch for order ${order._id}`);
-                    await NotificationModel.create({
-                        user: null,
-                        title: "⚠ Payment Mismatch",
-                        body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice} GHS, got ${ps.amount / 100} GHS`,
-                        url: `/admin/orders/${order._id}`,
-                        type: "payment",
-                        priority: "high",
-                    });
+                    await handlePaymentMismatch(order, ps, reference);
                     return res.sendStatus(400);
                 }
 
-                // ✅ Email check
                 if (ps.customer.email !== order.buyer.email) {
                     console.error(`⚠ Email mismatch for order ${order._id}`);
-                    await NotificationModel.create({
-                        user: null,
-                        title: "⚠ Payment Email Mismatch",
-                        body: `Reference ${reference} email mismatch. Paystack: ${ps.customer.email}, Expected: ${order.buyer.email}`,
-                        url: `/admin/orders/${order._id}`,
-                        type: "payment",
-                        priority: "high",
-                    });
+                    await handleEmailMismatch(order, ps, reference);
                     return res.sendStatus(400);
                 }
 
-                // ✅ Update order using webhook data
-                order.payment.status = "paid";
-                order.payment.reference = reference;
-                order.payment.transactionId = ps.id;
-                order.payment.channel = ps.channel;
-                order.paidAt = new Date(ps.paid_at || Date.now()); // Use Paystack's paid_at timestamp
+                // ✅ Update order to PAID
+                await updateOrderToPaid(order, ps);
+                console.log(`✅ Order ${order._id} marked as PAID via webhook.`);
 
-                const commission = order.totalPrice * 0.15;
-                order.commission = commission;
-                order.vendorEarnings = order.totalPrice - commission;
+                // ✅ Notify chef and buyer
+                await sendPaymentSuccessNotifications(order);
+            }
+        }
 
-                await order.save();
+        // 🔹 Handle FAILED payment
+        else if (event.event === "charge.failed" || (event.event === "charge.success" && event.data.status !== "success")) {
+            const ps = event.data;
+            const order = await MealOrder.findOne({ "payment.reference": reference })
+                .populate("buyer", "firstName lastName email")
+                .populate("chef", "email") // Only need chef email for notification
+                .populate("meal", "mealName price");
 
-                console.log(`✅ Order ${order._id} marked as paid via webhook.`);
+            if (order && order.payment.status === "pending") {
+                // ✅ Update order to FAILED
+                await updateOrderToFailed(order, ps);
+                console.log(`❌ Order ${order._id} marked as FAILED via webhook.`);
 
-                // 🔔 Push notifications
-                try {
-                    await sendUserNotification(order.chef._id, {
-                        title: "💰 New Paid Order",
-                        body: `Order ${order._id} has been paid.`,
-                        url: `/dashboard/orders/${order._id}`,
-                    });
-                    await sendUserNotification(order.buyer._id, {
-                        title: "✅ Payment Confirmed",
-                        body: `Your payment for Order ${order._id} was successful.`,
-                        url: `/dashboard/my-orders/${order._id}`,
-                    });
-                } catch (pushErr) {
-                    console.warn("Push notification failed:", pushErr?.message || pushErr);
-                }
-
-                // 📧 Emails
-                try {
-                    await mailtransporter.sendMail({
-                        from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-                        to: order.buyer.email,
-                        subject: "Payment Receipt",
-                        html: `<p>Hi ${order.buyer.firstName}, your payment for order ${order._id} was successful.</p>`,
-                    });
-                    await mailtransporter.sendMail({
-                        from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-                        to: order.chef.email,
-                        subject: "New Order Payment Received",
-                        html: `<p>Hi ${order.chef.firstName}, you just received a new paid order #${order._id}.</p>`,
-                    });
-                } catch (mailErr) {
-                    console.warn("Email sending failed:", mailErr?.message || mailErr);
-                }
-
-                // Admin record
-                await NotificationModel.create({
-                    user: null,
-                    title: "💰 New Payment Received",
-                    body: `Order #${order._id} paid successfully. Amount: GHS ${order.totalPrice}, Commission: GHS ${commission}`,
-                    url: `/admin/orders/${order._id}`,
-                    type: "payment",
-                });
+                // ✅ Notify buyer about failed payment
+                await sendPaymentFailedNotifications(order, ps);
             }
         }
 
         // 🔹 Handle transfer success
-        if (event.event === "transfer.success") {
+        else if (event.event === "transfer.success") {
             await NotificationModel.create({
                 user: null,
                 title: "✅ Transfer Successful",
@@ -142,7 +94,7 @@ export const paystackWebhook = async (req, res, next) => {
         }
 
         // 🔹 Handle transfer failure
-        if (event.event === "transfer.failed") {
+        else if (event.event === "transfer.failed") {
             await NotificationModel.create({
                 user: null,
                 title: "❌ Transfer Failed",
@@ -151,6 +103,11 @@ export const paystackWebhook = async (req, res, next) => {
                 type: "transfer",
                 priority: "high",
             });
+        }
+
+        // 🔹 Handle unknown events
+        else {
+            console.log(`ℹ️ Unhandled webhook event: ${event.event}`);
         }
 
         res.sendStatus(200);
@@ -166,6 +123,157 @@ export const paystackWebhook = async (req, res, next) => {
         });
         res.sendStatus(500);
     }
+};
+
+// =======================
+// HELPER FUNCTIONS
+// =======================
+
+const updateOrderToPaid = async (order, ps) => {
+    order.payment.status = "paid";
+    order.payment.reference = ps.reference;
+    order.payment.transactionId = ps.id;
+    order.payment.channel = ps.channel;
+    order.payment.failureReason = null; // Clear any previous failure
+    order.paidAt = new Date(ps.paid_at || Date.now());
+
+    const commission = order.totalPrice * 0.15;
+    order.commission = commission;
+    order.vendorEarnings = order.totalPrice - commission;
+
+    await order.save();
+};
+
+const updateOrderToFailed = async (order, ps) => {
+    order.payment.status = "failed";
+    order.payment.failureReason = ps.gateway_response || "Payment failed";
+    order.payment.failedAt = new Date();
+    await order.save();
+};
+
+const sendPaymentSuccessNotifications = async (order) => {
+    try {
+        // 🔔 Push notifications
+        await sendUserNotification(order.chef._id, {
+            title: "💰 New Paid Order",
+            body: `New order for ${order.meal.mealName} has been paid. Amount: GHS ${order.totalPrice}`,
+            url: `/dashboard/orders/${order._id}`,
+        });
+
+        await sendUserNotification(order.buyer._id, {
+            title: "✅ Payment Confirmed",
+            body: `Your payment for ${order.meal.mealName} was successful. Order #${order._id.toString().slice(-6)}`,
+            url: `/dashboard/my-orders/${order._id}`,
+        });
+
+        // 📧 Emails
+        await mailtransporter.sendMail({
+            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+            to: order.buyer.email,
+            subject: "Payment Receipt - Order Confirmed",
+            html: `
+                <p>Hi ${order.buyer.firstName},</p>
+                <p>Your payment for <strong>${order.meal.mealName}</strong> was successful!</p>
+                <p><strong>Order Details:</strong></p>
+                <ul>
+                    <li>Order ID: ${order._id.toString().slice(-6)}</li>
+                    <li>Amount: GHS ${order.totalPrice}</li>
+                    <li>Items: ${order.quantity}x ${order.meal.mealName}</li>
+                    <li>Pickup Time: ${new Date(order.pickupTime).toLocaleString()}</li>
+                </ul>
+            `,
+        });
+
+        await mailtransporter.sendMail({
+            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+            to: order.chef.email,
+            subject: "💰 New Paid Order Received",
+            html: `
+                <p>Hi ${order.chef.firstName},</p>
+                <p>You have a new paid order!</p>
+                <p><strong>Order Details:</strong></p>
+                <ul>
+                    <li>Order ID: ${order._id.toString().slice(-6)}</li>
+                    <li>Customer: ${order.buyer.firstName} ${order.buyer.lastName}</li>
+                    <li>Meal: ${order.quantity}x ${order.meal.mealName}</li>
+                    <li>Total: GHS ${order.totalPrice}</li>
+                    <li>Your Earnings: GHS ${order.vendorEarnings}</li>
+                    <li>Pickup Time: ${new Date(order.pickupTime).toLocaleString()}</li>
+                </ul>
+            `,
+        });
+
+        // Admin record
+        await NotificationModel.create({
+            user: null,
+            title: "💰 New Payment Received",
+            body: `Order #${order._id.toString().slice(-6)} paid successfully. Amount: GHS ${order.totalPrice}`,
+            url: `/admin/orders/${order._id}`,
+            type: "payment",
+        });
+
+    } catch (error) {
+        console.warn("Notification sending failed:", error?.message || error);
+    }
+};
+
+const sendPaymentFailedNotifications = async (order, ps) => {
+    try {
+        // 🔔 Push notification to buyer
+        await sendUserNotification(order.buyer._id, {
+            title: "❌ Payment Failed",
+            body: `Payment for order ${order._id.toString().slice(-6)} failed. Please try again.`,
+            url: `/dashboard/my-orders/${order._id}`,
+        });
+
+        // 📧 Email to buyer
+        await mailtransporter.sendMail({
+            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+            to: order.buyer.email,
+            subject: "Payment Failed - Order On Hold",
+            html: `
+                <p>Hi ${order.buyer.firstName},</p>
+                <p>Your payment for <strong>${order.meal.mealName}</strong> failed.</p>
+                <p><strong>Reason:</strong> ${ps.gateway_response || "Payment declined"}</p>
+                <p>Please try again to complete your order.</p>
+            `,
+        });
+
+        // Admin record
+        await NotificationModel.create({
+            user: null,
+            title: "❌ Payment Failed",
+            body: `Payment failed for Order #${order._id.toString().slice(-6)}. Reason: ${ps.gateway_response}`,
+            url: `/admin/orders/${order._id}`,
+            type: "payment",
+            priority: "high",
+        });
+
+    } catch (error) {
+        console.warn("Failed payment notification error:", error?.message || error);
+    }
+};
+
+const handlePaymentMismatch = async (order, ps, reference) => {
+    await NotificationModel.create({
+        user: null,
+        title: "⚠ Payment Mismatch",
+        body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice} GHS, got ${ps.amount / 100} GHS`,
+        url: `/admin/orders/${order._id}`,
+        type: "payment",
+        priority: "high",
+    });
+};
+
+const handleEmailMismatch = async (order, ps, reference) => {
+    await NotificationModel.create({
+        user: null,
+        title: "⚠ Payment Email Mismatch",
+        body: `Reference ${reference} email mismatch. Paystack: ${ps.customer.email}, Expected: ${order.buyer.email}`,
+        url: `/admin/orders/${order._id}`,
+        type: "payment",
+        priority: "high",
+    });
 };
 
 // =======================
@@ -259,8 +367,8 @@ export const verifyPaymentController = async (req, res, next) => {
         console.log("🔹 Verifying payment for reference:", paymentReference);
 
         const order = await MealOrder.findOne({ "payment.reference": paymentReference })
-            .populate("buyer", "email")
-            .populate("chef", "email paystack")
+            .populate("buyer", "email firstName lastName")
+            .populate("chef", "email paystack firstName lastName")
             .populate("meal", "mealName price");
 
         if (!order) return res.status(404).json({ message: "Order not found for this reference" });
@@ -271,33 +379,72 @@ export const verifyPaymentController = async (req, res, next) => {
         const verified = await verifyPayment(paymentReference);
         console.log("🔹 Paystack verification response:", verified);
 
-        if (!verified?.status || verified.data.status !== "success") {
-            return res.status(400).json({ message: "Payment verification failed", data: verified });
-        }
+        // ✅ Handle PAYMENT SUCCESS
+        if (verified?.status && verified.data.status === "success") {
+            // ✅ Amount validation
+            const expectedAmount = Math.round(order.totalPrice * 100);
+            const receivedAmount = verified.data.amount;
 
-        // ✅ Convert Paystack amount to GHS
-        const expectedAmount = Math.round(order.totalPrice * 100); // in pesewas
-        const receivedAmount = verified.data.amount; // Paystack amount is already in pesewas
+            if (receivedAmount !== expectedAmount) {
+                return res.status(400).json({
+                    message: `Payment amount mismatch. Expected: GHS ${expectedAmount / 100} Received: GHS ${receivedAmount / 100}`,
+                });
+            }
 
-        if (receivedAmount !== expectedAmount) {
-            return res.status(400).json({
-                message: `Payment amount mismatch. Expected: GHS ${expectedAmount / 100} Received: GHS ${receivedAmount / 100}`,
+            // ✅ Update order to PAID
+            order.payment.status = "paid";
+            order.payment.transactionId = verified.data.id;
+            order.payment.channel = verified.data.channel;
+            order.payment.failureReason = null; // Clear any previous failure
+            order.paidAt = new Date(verified.data.paid_at || Date.now());
+            await order.save();
+
+            console.log("✅ Order updated after successful payment:", order);
+
+            // ✅ Send notifications (optional - same as webhook)
+            await sendPaymentSuccessNotifications(order);
+
+            return res.status(200).json({
+                message: "Payment verified successfully",
+                order,
+                payment: order.payment,
             });
         }
 
-        // ✅ Update order payment status
-        order.payment.status = "paid";
-        order.payment.transactionId = verified.data.id;
-        order.paidAt = new Date(verified.data.paidAt || Date.now());
-        await order.save();
+        // ✅ Handle PAYMENT FAILED
+        else if (verified?.data?.status === "failed" || verified?.data?.status === "abandoned") {
+            // ✅ Update order to FAILED
+            order.payment.status = "failed";
+            order.payment.failureReason = verified.data.gateway_response || "Payment failed";
+            order.payment.failedAt = new Date();
+            await order.save();
 
-        console.log("✅ Order updated after successful payment:", order);
+            console.log("❌ Order marked as failed:", order);
 
-        res.status(200).json({
-            message: "Payment verified successfully",
-            order,
-            payment: order.payment,
-        });
+            // ✅ Send failure notifications (optional)
+            await sendPaymentFailedNotifications(order, verified.data);
+
+            return res.status(400).json({
+                message: "Payment verification failed",
+                failureReason: verified.data.gateway_response,
+                data: verified.data,
+            });
+        }
+
+        // ✅ Handle STILL PENDING payments
+        else {
+            return res.status(200).json({
+                message: "Payment still processing",
+                status: verified.data.status,
+                order: {
+                    ...order.toObject(),
+                    payment: {
+                        ...order.payment,
+                        status: "pending" // Keep as pending
+                    }
+                }
+            });
+        }
 
     } catch (err) {
         console.error("❌ Error in verifyPaymentController:", err);
