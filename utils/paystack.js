@@ -15,12 +15,20 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
     if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
 
     try {
-        // ✅ FIXED: Only convert once here
-        const scaledAmount = Math.round(amount * 100); // This is the ONLY conversion
+        const scaledAmount = Math.round(amount * 100); // Convert GHS to pesewas
+
+        // 🧾 Log basic payment info
+        console.log(`🔸 Initiating payment`);
+        console.log(`   Email: ${email}`);
+        console.log(`   Amount: GHS ${amount} → ${scaledAmount} pesewas`);
+        console.log(`   Method: ${method}`);
+        console.log(`   Subaccount: ${subaccount || "None (platform will receive full amount)"}`);
+        console.log(`   Bearer: ${bearer}`);
+        console.log(`   Metadata:`, metadata);
 
         const basePayload = {
             email,
-            amount: scaledAmount, // Now correct: GHS 70 → 7000 pesewas
+            amount: scaledAmount,
             currency: "GHS",
             metadata,
             subaccount,
@@ -32,6 +40,11 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
             if (!momo?.phone || !momo?.provider) {
                 throw new Error("Mobile money payment requires phone and provider");
             }
+
+            console.log(`📱 Mobile Money Details`);
+            console.log(`   Phone: ${momo.phone}`);
+            console.log(`   Provider: ${momo.provider}`);
+
             res = await paystack.post("/charge", {
                 ...basePayload,
                 mobile_money: {
@@ -40,15 +53,17 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
                 },
             });
         } else {
+            console.log(`💳 Initializing card/bank transaction`);
             res = await paystack.post("/transaction/initialize", {
                 ...basePayload,
                 channels: method === "bank" ? ["bank"] : ["card", "bank"],
             });
         }
 
+        console.log(`✅ Paystack response received`);
         return res.data;
     } catch (err) {
-        console.error("initiatePayment error:", err.response?.data || err.message);
+        console.error("❌ initiatePayment error:", err.response?.data || err.message);
         throw new Error(err.response?.data?.message || "Failed to initiate payment");
     }
 };
