@@ -2,13 +2,13 @@ import sgMail from "@sendgrid/mail";
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY); // Store your API key securely
 
-export const sendEmail = async ({ to, subject, html }) => {
+export const sendEmail = async ({ to, subject, html, from }) => {
     try {
         const msg = {
             to,
-            from: {
-                email: process.env.SMTP_FROM_EMAIL, // e.g. "noreply@potchef.com"
-                name: process.env.SMTP_FROM_NAME 
+            from: from || {  // Use provided from or default
+                email: process.env.SMTP_FROM_EMAIL,
+                name: process.env.SMTP_FROM_NAME
             },
             subject,
             html,
@@ -21,8 +21,6 @@ export const sendEmail = async ({ to, subject, html }) => {
         throw new Error("Failed to send email");
     }
 };
-
-
 
 
 

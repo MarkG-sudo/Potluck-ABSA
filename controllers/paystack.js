@@ -197,11 +197,28 @@ const sendPaymentSuccessNotifications = async (order) => {
         if (isValidEmail(order.buyer.email)) {
             try {
                 await sendEmail({
-                    from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+                    from: {  
+                        name: process.env.SMTP_FROM_NAME,
+                        email: process.env.SMTP_FROM_EMAIL
+                    },
                     to: order.buyer.email,
                     subject: `✅ Payment Receipt - Order #${shortId}`,
-                    html: `...` // your existing template
+                    html: `
+        <p>Hi ${order.buyer.firstName},</p>
+        <p>Your payment for <strong>${order.quantity}x ${order.meal.mealName}</strong> has been successfully processed.</p>
+        <p><strong>Order Summary:</strong></p>
+        <ul>
+            <li><strong>Order ID:</strong> ${shortId}</li>
+            <li><strong>Chef:</strong> ${order.chef.firstName} ${order.chef.lastName}</li>
+            <li><strong>Total Paid:</strong> GHS ${order.totalPrice.toFixed(2)}</li>
+            <li><strong>Pickup Time:</strong> ${pickupTime}</li>
+        </ul>
+        <p>You can track your order status in your dashboard.</p>
+        <p>Thank you for choosing PotChef!</p>
+        <p>— PotChef Team</p>
+    `
                 });
+
                 console.log(`✅ Buyer email sent successfully`);
             } catch (emailError) {
                 console.error(`❌ Buyer email failed:`, emailError.message);
@@ -214,11 +231,29 @@ const sendPaymentSuccessNotifications = async (order) => {
         if (isValidEmail(order.chef.email)) {
             try {
                 await sendEmail({
-                    from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+                    from: {  
+                        name: process.env.SMTP_FROM_NAME,
+                        email: process.env.SMTP_FROM_EMAIL
+                    },
                     to: order.chef.email,
                     subject: `💰 New Paid Order - #${shortId}`,
-                    html: `...` // your existing template
+                    html: `
+        <p>Hi ${order.chef.firstName},</p>
+        <p>You've received a new paid order for <strong>${order.meal.mealName}</strong>.</p>
+        <p><strong>Order Details:</strong></p>
+        <ul>
+            <li><strong>Order ID:</strong> ${shortId}</li>
+            <li><strong>Customer:</strong> ${order.buyer.firstName} ${order.buyer.lastName}</li>
+            <li><strong>Quantity:</strong> ${order.quantity}</li>
+            <li><strong>Total Paid:</strong> GHS ${order.totalPrice.toFixed(2)}</li>
+            <li><strong>Your Earnings:</strong> GHS ${order.vendorEarnings.toFixed(2)}</li>
+            <li><strong>Pickup Time:</strong> ${pickupTime}</li>
+        </ul>
+        <p>Please prepare the meal and have it ready by the pickup time.</p>
+        <p>— PotChef Team</p>
+    `
                 });
+
                 console.log(`✅ Chef email sent successfully`);
             } catch (emailError) {
                 console.error(`❌ Chef email failed:`, emailError.message);
