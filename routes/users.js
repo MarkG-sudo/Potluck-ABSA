@@ -22,8 +22,8 @@ userRouter.get("/users/me", isAuthenticated, hasPermission('get_profile'), getMy
 userRouter.patch("/users/avatar", isAuthenticated, hasPermission('update_profile'), upload.single("avatar"), updateAvatar);
 
 // Admin-only (expand with role middleware later)
-userRouter.get("/admin/users", getAllUsers);
-userRouter.delete("/admin/:id",  deleteUser);
+userRouter.get("/admin/users", isAuthenticated, getAllUsers);
+userRouter.delete("/admin/:id", isAuthenticated, hasPermission('delete_user'),  deleteUser);
 
 userRouter.get("/users/:id", isAuthenticated, getOneUser);
 

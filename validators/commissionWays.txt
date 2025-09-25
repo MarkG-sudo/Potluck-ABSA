@@ -1,0 +1,431 @@
+// utils/commissionCalculator.js
+/**
+ * AUTOMATIC COMMISSION DIFFERENTIATION SYSTEM
+ * 
+ * This module provides multiple strategies for automatically calculating
+ * commission rates based on various factors like meal category, chef performance,
+ * pricing tiers, and promotional periods.
+ */
+
+// =============================================
+// CONFIGURATION: COMMISSION TIERS & SETTINGS
+// =============================================
+
+/**
+ * Category-Based Commission Tiers
+ * Different commission rates for different meal categories
+ */
+export const categoryCommissionTiers = {
+    "Premium": 0.20,    // 20% for gourmet/expensive meals
+    "Standard": 0.15,   // 15% for regular meals (DEFAULT)
+    "Budget": 0.10,     // 10% for affordable meals
+    "Charity": 0.05,    // 5% for charity/social impact meals
+    "Beverage": 0.12,   // 12% for drinks/beverages
+    "Dessert": 0.13,    // 13% for desserts/sweets
+    "Appetizer": 0.14   // 14% for starters/appetizers
+};
+
+/**
+ * Chef Tier System Commissions
+ * Reward high-performing chefs with better rates
+ */
+export const chefTierCommissions = {
+    "Platinum": 0.10,   // 10% for top chefs (high volume/rating)
+    "Gold": 0.13,       // 13% for experienced chefs
+    "Silver": 0.15,     // 15% for regular chefs (DEFAULT)
+    "Bronze": 0.18      // 18% for new chefs (encourage growth)
+};
+
+/**
+ * Price-Based Commission Tiers
+ * Adjust commission based on meal price point
+ */
+export const priceCommissionTiers = [
+    { threshold: 75, rate: 0.22 },  // > GHS 75: 22% (Premium/Luxury)
+    { threshold: 50, rate: 0.18 },  // GHS 50-75: 18% (High-end)
+    { threshold: 25, rate: 0.15 },  // GHS 25-50: 15% (Standard)
+    { threshold: 15, rate: 0.12 },  // GHS 15-25: 12% (Budget)
+    { threshold: 0,  rate: 0.10 }   // < GHS 15: 10% (Value)
+];
+
+/**
+ * Promotional Commission Periods
+ * Special rates for marketing campaigns and seasons
+ */
+export const promotionalCommissions = {
+    "HOLIDAY_2024": {
+        rate: 0.10,
+        name: "Holiday Season 2024",
+        start: new Date("2024-12-01"),
+        end: new Date("2024-12-31"),
+        categories: ["All"], // Applies to all categories
+        conditions: {
+            minRating: 4.0,
+            availableDuring: ["December"]
+        }
+    },
+    "NEW_CHEF_BOOST": {
+        rate: 0.08,
+        name: "New Chef Promotion",
+        start: new Date("2024-09-01"),
+        end: new Date("2024-11-30"),
+        categories: ["All"],
+        conditions: {
+            maxMealsListed: 5, // Only for chefs with ≤ 5 meals
+            chefTier: ["Bronze"]
+        }
+    },
+    "COMMUNITY_MEAL": {
+        rate: 0.05,
+        name: "Community Meal Program",
+        permanent: true, // No end date
+        categories: ["Charity", "Budget"],
+        conditions: {
+            maxPrice: 20, // Meals under GHS 20
+            forCharity: true
+        }
+    },
+    "SUMMER_SPECIAL": {
+        rate: 0.12,
+        name: "Summer Special",
+        start: new Date("2024-06-01"),
+        end: new Date("2024-08-31"),
+        categories: ["Beverage", "Dessert"],
+        conditions: {
+            availableDuring: ["June", "July", "August"]
+        }
+    }
+};
+
+// =============================================
+// CORE CALCULATION FUNCTIONS
+// =============================================
+
+/**
+ * Calculate commission based on multiple factors with weighted priority
+ * @param {Object} options - Calculation parameters
+ * @param {number} options.mealPrice - Price of the meal
+ * @param {string} options.category - Meal category
+ * @param {string} options.chefTier - Chef's performance tier
+ * @param {Object} options.chefStats - Chef performance statistics
+ * @param {Date} options.availableFrom - When meal becomes available
+ * @returns {number} - Calculated commission rate (0-1)
+ */
+export const calculateAutoCommission = (options) => {
+    const {
+        mealPrice,
+        category = "Standard",
+        chefTier = "Silver",
+        chefStats = {},
+        availableFrom = new Date()
+    } = options;
+
+    const strategies = [
+        { weight: 0.3, rate: getCategoryBasedRate(category) },
+        { weight: 0.25, rate: getChefTierRate(chefTier) },
+        { weight: 0.2, rate: getPriceBasedRate(mealPrice) },
+        { weight: 0.15, rate: getPerformanceBasedRate(chefStats) },
+        { weight: 0.1, rate: getPromotionalRate(category, availableFrom, chefStats) }
+    ];
+
+    // Calculate weighted average
+    const totalWeight = strategies.reduce((sum, s) => sum + s.weight, 0);
+    const weightedRate = strategies.reduce((sum, s) => sum + (s.rate * s.weight), 0) / totalWeight;
+
+    // Ensure rate is within bounds and round to 2 decimal places
+    return Math.max(0.05, Math.min(0.3, Math.round(weightedRate * 100) / 100));
+};
+
+/**
+ * Strategy 1: Category-Based Commission
+ * Different rates for different meal types
+ */
+const getCategoryBasedRate = (category) => {
+    return categoryCommissionTiers[category] || categoryCommissionTiers["Standard"];
+};
+
+/**
+ * Strategy 2: Chef Tier-Based Commission
+ * Reward chefs based on their performance tier
+ */
+const getChefTierRate = (chefTier) => {
+    return chefTierCommissions[chefTier] || chefTierCommissions["Silver"];
+};
+
+/**
+ * Strategy 3: Price-Based Commission
+ * Adjust rate based on meal price point
+ */
+const getPriceBasedRate = (mealPrice) => {
+    const tier = priceCommissionTiers.find(t => mealPrice >= t.threshold);
+    return tier ? tier.rate : 0.10; // Default to 10%
+};
+
+/**
+ * Strategy 4: Performance-Based Dynamic Commission
+ * Adjust rate based on chef's actual performance metrics
+ */
+const getPerformanceBasedRate = (chefStats) => {
+    const {
+        totalOrders = 0,
+        totalRevenue = 0,
+        avgRating = 0,
+        completionRate = 1.0,
+        responseTime = 24 // hours
+    } = chefStats;
+
+    let baseRate = 0.15; // Start with standard rate
+
+    // Volume-based adjustments
+    if (totalOrders > 100) baseRate -= 0.03;    // -3% for high volume
+    else if (totalOrders < 10) baseRate += 0.02; // +2% to encourage new chefs
+
+    // Quality-based adjustments
+    if (avgRating > 4.5) baseRate -= 0.02;      // -2% for excellent quality
+    else if (avgRating < 3.5) baseRate += 0.03; // +3% incentive to improve
+
+    // Reliability adjustments
+    if (completionRate > 0.95) baseRate -= 0.01; // -1% for high completion rate
+    if (responseTime < 2) baseRate -= 0.01;      // -1% for fast responses
+
+    // Revenue-based adjustments
+    if (totalRevenue > 5000) baseRate -= 0.02;   // -2% for high-revenue chefs
+
+    return Math.max(0.08, Math.min(0.25, baseRate));
+};
+
+/**
+ * Strategy 5: Promotional Commission Rates
+ * Apply special rates during promotional periods
+ */
+const getPromotionalRate = (category, availableFrom, chefStats) => {
+    const now = new Date();
+    
+    for (const [promoKey, promotion] of Object.entries(promotionalCommissions)) {
+        // Check if promotion is active
+        const isActive = promotion.permanent || 
+                        (now >= promotion.start && now <= promotion.end);
+        
+        if (!isActive) continue;
+
+        // Check category eligibility
+        const categoryEligible = promotion.categories.includes("All") || 
+                               promotion.categories.includes(category);
+        
+        if (!categoryEligible) continue;
+
+        // Check additional conditions
+        if (promotion.conditions) {
+            const {
+                minRating,
+                maxMealsListed,
+                chefTier,
+                maxPrice,
+                availableDuring
+            } = promotion.conditions;
+
+            if (minRating && chefStats.avgRating < minRating) continue;
+            if (maxMealsListed && chefStats.mealsCount > maxMealsListed) continue;
+            if (chefTier && !chefTier.includes(chefStats.chefTier)) continue;
+            if (maxPrice && chefStats.avgMealPrice > maxPrice) continue;
+            if (availableDuring) {
+                const month = availableFrom.toLocaleString('en', { month: 'long' });
+                if (!availableDuring.includes(month)) continue;
+            }
+        }
+
+        // Promotion applies!
+        return promotion.rate;
+    }
+
+    // No active promotion found
+    return null;
+};
+
+// =============================================
+// HELPER FUNCTIONS & UTILITIES
+// =============================================
+
+/**
+ * Get chef performance statistics for commission calculation
+ * @param {string} chefId - Chef's user ID
+ * @returns {Object} Chef performance metrics
+ */
+export const getChefPerformanceStats = async (chefId) => {
+    // This would typically query your database
+    // Simplified example:
+    const stats = await MealModel.aggregate([
+        { $match: { createdBy: chefId, status: "Available" } },
+        {
+            $group: {
+                _id: "$createdBy",
+                mealsCount: { $sum: 1 },
+                avgMealPrice: { $avg: "$price" },
+                totalListings: { $sum: "$initialServings" }
+            }
+        }
+    ]);
+
+    const orderStats = await MealOrder.aggregate([
+        { $match: { chef: chefId, paymentStatus: "paid" } },
+        {
+            $group: {
+                _id: "$chef",
+                totalOrders: { $sum: 1 },
+                totalRevenue: { $sum: "$totalPrice" },
+                avgRating: { $avg: "$chefRating" },
+                completionRate: { 
+                    $avg: { 
+                        $cond: [{ $eq: ["$status", "Completed"] }, 1, 0] 
+                    } 
+                }
+            }
+        }
+    ]);
+
+    return {
+        mealsCount: stats[0]?.mealsCount || 0,
+        avgMealPrice: stats[0]?.avgMealPrice || 0,
+        totalOrders: orderStats[0]?.totalOrders || 0,
+        totalRevenue: orderStats[0]?.totalRevenue || 0,
+        avgRating: orderStats[0]?.avgRating || 0,
+        completionRate: orderStats[0]?.completionRate || 1.0
+    };
+};
+
+/**
+ * Determine chef tier based on performance metrics
+ * @param {Object} chefStats - Chef performance statistics
+ * @returns {string} Chef tier (Platinum, Gold, Silver, Bronze)
+ */
+export const calculateChefTier = (chefStats) => {
+    const { totalOrders, totalRevenue, avgRating, completionRate } = chefStats;
+
+    let score = 0;
+
+    // Order volume (max 40 points)
+    if (totalOrders >= 100) score += 40;
+    else if (totalOrders >= 50) score += 30;
+    else if (totalOrders >= 20) score += 20;
+    else if (totalOrders >= 5) score += 10;
+
+    // Revenue (max 25 points)
+    if (totalRevenue >= 5000) score += 25;
+    else if (totalRevenue >= 2000) score += 20;
+    else if (totalRevenue >= 500) score += 15;
+    else if (totalRevenue >= 100) score += 10;
+
+    // Rating (max 20 points)
+    if (avgRating >= 4.5) score += 20;
+    else if (avgRating >= 4.0) score += 15;
+    else if (avgRating >= 3.5) score += 10;
+    else if (avgRating >= 3.0) score += 5;
+
+    // Reliability (max 15 points)
+    if (completionRate >= 0.95) score += 15;
+    else if (completionRate >= 0.90) score += 10;
+    else if (completionRate >= 0.85) score += 5;
+
+    // Determine tier
+    if (score >= 80) return "Platinum";
+    if (score >= 60) return "Gold";
+    if (score >= 40) return "Silver";
+    return "Bronze";
+};
+
+/**
+ * Get the best available commission rate for a meal
+ * @param {Object} mealData - Meal information
+ * @param {Object} chefData - Chef information and stats
+ * @returns {Object} Commission recommendation with details
+ */
+export const getOptimalCommission = async (mealData, chefData) => {
+    const chefStats = await getChefPerformanceStats(chefData._id);
+    const chefTier = calculateChefTier(chefStats);
+
+    const autoRate = calculateAutoCommission({
+        mealPrice: mealData.price,
+        category: mealData.category,
+        chefTier: chefTier,
+        chefStats: chefStats,
+        availableFrom: mealData.availableFrom
+    });
+
+    const promotionalRate = getPromotionalRate(
+        mealData.category, 
+        mealData.availableFrom, 
+        { ...chefStats, chefTier }
+    );
+
+    return {
+        recommendedRate: promotionalRate || autoRate,
+        rateType: promotionalRate ? 'promotional' : 'calculated',
+        chefTier: chefTier,
+        factors: {
+            category: getCategoryBasedRate(mealData.category),
+            priceTier: getPriceBasedRate(mealData.price),
+            performance: getPerformanceBasedRate(chefStats),
+            chefTier: getChefTierRate(chefTier),
+            promotion: promotionalRate
+        },
+        explanation: generateCommissionExplanation(mealData, chefTier, promotionalRate)
+    };
+};
+
+/**
+ * Generate human-readable explanation for commission rate
+ */
+const generateCommissionExplanation = (mealData, chefTier, promotionalRate) => {
+    if (promotionalRate) {
+        return `Special promotional rate applied for ${mealData.category} category`;
+    }
+    
+    return `Rate based on ${mealData.category} category and ${chefTier} chef tier`;
+};
+
+// =============================================
+// USAGE EXAMPLES
+// =============================================
+
+/*
+// Example 1: Basic usage
+const commission = calculateAutoCommission({
+    mealPrice: 45,
+    category: "Premium",
+    chefTier: "Gold"
+});
+// Returns: 0.16 (16%)
+
+// Example 2: Advanced with chef stats
+const optimalRate = await getOptimalCommission(
+    { price: 35, category: "Standard", availableFrom: new Date() },
+    { _id: "chef123", firstName: "John", lastName: "Doe" }
+);
+// Returns: { recommendedRate: 0.14, rateType: 'calculated', ... }
+
+// Example 3: Apply to meal creation
+mealSchema.pre('save', function(next) {
+    if (this.isNew) {
+        getOptimalCommission(this, this.createdBy)
+            .then(commission => {
+                this.commissionRate = commission.recommendedRate;
+                this.commissionExplanation = commission.explanation;
+                next();
+            })
+            .catch(next);
+    } else {
+        next();
+    }
+});
+*/
+
+export default {
+    calculateAutoCommission,
+    getOptimalCommission,
+    calculateChefTier,
+    getChefPerformanceStats,
+    categoryCommissionTiers,
+    chefTierCommissions,
+    priceCommissionTiers,
+    promotionalCommissions
+};

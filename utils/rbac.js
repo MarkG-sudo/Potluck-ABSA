@@ -93,6 +93,8 @@ export const permissions = [
             'access_user_metrics',
             'add_franchisee',
             'update_franchisee',
+            'update_commission',
+            'delete_user',
             'view_compliance_dashboard'
         ]
     },

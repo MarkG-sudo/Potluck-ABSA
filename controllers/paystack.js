@@ -153,6 +153,16 @@ const updateOrderToFailed = async (order, ps) => {
 
 const sendPaymentSuccessNotifications = async (order) => {
     try {
+        const shortId = order._id.toString().slice(-6);
+        const pickupTime = new Date(order.pickupTime).toLocaleString("en-GH", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+        });
+
         // 🔔 Push notifications
         await sendUserNotification(order.chef._id, {
             title: "💰 New Paid Order",
@@ -162,52 +172,57 @@ const sendPaymentSuccessNotifications = async (order) => {
 
         await sendUserNotification(order.buyer._id, {
             title: "✅ Payment Confirmed",
-            body: `Your payment for ${order.meal.mealName} was successful. Order #${order._id.toString().slice(-6)}`,
+            body: `Your payment for ${order.meal.mealName} was successful. Order #${shortId}`,
             url: `/dashboard/my-orders/${order._id}`,
         });
 
-        // 📧 Emails
+        // 📧 Email to Buyer
         await mailtransporter.sendMail({
             from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
             to: order.buyer.email,
-            subject: "Payment Receipt - Order Confirmed",
+            subject: `✅ Payment Receipt - Order #${shortId}`,
             html: `
                 <p>Hi ${order.buyer.firstName},</p>
-                <p>Your payment for <strong>${order.meal.mealName}</strong> was successful!</p>
-                <p><strong>Order Details:</strong></p>
+                <p>Thank you for your order! Your payment for <strong>${order.quantity}x ${order.meal.mealName}</strong> has been confirmed.</p>
+                <p><strong>Order Summary:</strong></p>
                 <ul>
-                    <li>Order ID: ${order._id.toString().slice(-6)}</li>
-                    <li>Amount: GHS ${order.totalPrice}</li>
-                    <li>Items: ${order.quantity}x ${order.meal.mealName}</li>
-                    <li>Pickup Time: ${new Date(order.pickupTime).toLocaleString()}</li>
+                    <li><strong>Order ID:</strong> ${shortId}</li>
+                    <li><strong>Chef:</strong> ${order.chef.firstName} ${order.chef.lastName}</li>
+                    <li><strong>Total Paid:</strong> GHS ${order.totalPrice.toFixed(2)}</li>
+                    <li><strong>Pickup Time:</strong> ${pickupTime}</li>
                 </ul>
+                <p>You can track your order status in your dashboard.</p>
+                <p>— PotChef Team</p>
             `,
         });
 
+        // 📧 Email to Chef
         await mailtransporter.sendMail({
             from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
             to: order.chef.email,
-            subject: "💰 New Paid Order Received",
+            subject: `💰 New Paid Order - #${shortId}`,
             html: `
                 <p>Hi ${order.chef.firstName},</p>
-                <p>You have a new paid order!</p>
+                <pYou’ve received a new paid order for <strong>${order.meal.mealName}</strong>.</p>
                 <p><strong>Order Details:</strong></p>
                 <ul>
-                    <li>Order ID: ${order._id.toString().slice(-6)}</li>
-                    <li>Customer: ${order.buyer.firstName} ${order.buyer.lastName}</li>
-                    <li>Meal: ${order.quantity}x ${order.meal.mealName}</li>
-                    <li>Total: GHS ${order.totalPrice}</li>
-                    <li>Your Earnings: GHS ${order.vendorEarnings}</li>
-                    <li>Pickup Time: ${new Date(order.pickupTime).toLocaleString()}</li>
+                    <li><strong>Order ID:</strong> ${shortId}</li>
+                    <li><strong>Customer:</strong> ${order.buyer.firstName} ${order.buyer.lastName}</li>
+                    <li><strong>Quantity:</strong> ${order.quantity}</li>
+                    <li><strong>Total Paid:</strong> GHS ${order.totalPrice.toFixed(2)}</li>
+                    <li><strong>Your Earnings:</strong> GHS ${order.vendorEarnings.toFixed(2)}</li>
+                    <li><strong>Pickup Time:</strong> ${pickupTime}</li>
                 </ul>
+                <p>Please prepare the meal and have it ready by the pickup time.</p>
+                <p>— PotChef Team</p>
             `,
         });
 
-        // Admin record
+        // 🗂️ Admin record
         await NotificationModel.create({
             user: null,
             title: "💰 New Payment Received",
-            body: `Order #${order._id.toString().slice(-6)} paid successfully. Amount: GHS ${order.totalPrice}`,
+            body: `Order #${shortId} paid successfully. Amount: GHS ${order.totalPrice}`,
             url: `/admin/orders/${order._id}`,
             type: "payment",
         });
@@ -216,6 +231,7 @@ const sendPaymentSuccessNotifications = async (order) => {
         console.warn("Notification sending failed:", error?.message || error);
     }
 };
+
 
 const sendPaymentFailedNotifications = async (order, ps) => {
     try {
@@ -312,6 +328,7 @@ export const createPaymentController = async (req, res, next) => {
             method,
             momo,
             currency: "GHS",
+            subaccount: mealOrder.chef?.paystack?.subaccountCode,
             metadata: {
                 orderId: mealOrder._id.toString(),
                 buyerId: user._id.toString(),
