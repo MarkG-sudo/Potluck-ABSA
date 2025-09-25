@@ -316,7 +316,7 @@ const sendPaymentFailedNotifications = async (order, ps) => {
 
         // 📧 Email to buyer - FIXED SendGrid format
         await sendEmail({
-            from: {  // ✅ Correct SendGrid object format
+            from: {  
                 name: process.env.SMTP_FROM_NAME,
                 email: process.env.SMTP_FROM_EMAIL
             },

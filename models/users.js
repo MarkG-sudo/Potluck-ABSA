@@ -23,9 +23,7 @@ const userSchema = new Schema({
     password: {
         type: String,
         minlength: 8,
-        required: function () {
-            return this.source === "local";
-        }
+        required: true
     },
     avatar: { type: String, default: "" },
 
@@ -45,14 +43,14 @@ const userSchema = new Schema({
     approvedAt: { type: Date },
 
     // Google OAuth
-    googleId: { type: String, sparse: true, index: true },
-    googleAccessToken: { type: String },
-    googleRefreshToken: { type: String },
-    source: {
-        type: String,
-        enum: ["local", "google"],
-        default: "local"
-    },
+    // googleId: { type: String, sparse: true, index: true },
+    // googleAccessToken: { type: String },
+    // googleRefreshToken: { type: String },
+    // source: {
+    //     type: String,
+    //     enum: ["local", "google"],
+    //     default: "local"
+    // },
 
     // Payout details (bank only for Paystack)
     payoutDetails: {

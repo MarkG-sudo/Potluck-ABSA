@@ -1,137 +1,79 @@
 import Joi from 'joi';
 
-// export const registerUserValidator = Joi.object({
-//     firstName: Joi.string().trim().min(2).max(50).required(),
-
-//     lastName: Joi.string().trim().min(2).max(50).required(),
-
-//     email: Joi.string()
-//         .trim()
-//         .email({ tlds: { allow: false } })
-//         .required()
-//         .messages({ 'string.email': 'Email must be a valid address' }),
-
-//     phone: Joi.string()
-//         .pattern(/^0\d{9}$/)
-//         .allow('', null)
-//         .optional()
-//         .messages({
-//             "string.pattern.base": "Phone number must be a valid 10-digit Ghana number (e.g. 0559090182)"
-//         }),
-
-//     password: Joi.when('source', {
-//         is: 'local',
-//         then: Joi.string()
-//             .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}$"))
-//             .required()
-//             .messages({
-//                 'string.pattern.base': 'Password must be at least 8 characters, including uppercase, lowercase, and a number.'
-//             }),
-//         otherwise: Joi.string().optional()
-//     }),
-
-//     avatar: Joi.string().uri().optional(),
-
-//     role: Joi.string()
-//         .valid('potchef', 'potlucky')
-//         .required()
-//         .messages({
-//             'any.only': 'Role must be either potchef or potlucky'
-//         }),
-
-//     source: Joi.string()
-//         .valid('local', 'google')
-//         .default('local'),
-
-//        // Updated validator - make payoutDetails optional for potchefs
-//     payoutDetails: Joi.when('role', {
-//         is: 'potchef',
-//         then: Joi.object({
-//             type: Joi.string().valid('bank', 'mobileMoney').required(), // ← Change to optional
-//             bank: Joi.when('type', {
-//                 is: 'bank',
-//                 then: Joi.object({
-//                     bankCode: Joi.string().required(),
-//                     accountNumber: Joi.string().required(),
-//                     accountName: Joi.string().required()
-//                 }).required(),
-//                 otherwise: Joi.forbidden()
-//             }),
-//             mobileMoney: Joi.when('type', {
-//                 is: 'mobileMoney',
-//                 then: Joi.object({
-//                     provider: Joi.string().valid('mtn', 'vodafone', 'airteltigo').required(),
-//                     number: Joi.string().required()
-//                 }).required(),
-//                 otherwise: Joi.forbidden()
-//             })
-//         }).optional(), 
-//         otherwise: Joi.forbidden()
-//     })
-
-// }).messages({
-//     'any.required': 'All fields marked * are required',
-// });
-
-// user.validators.js
 export const registerUserValidator = Joi.object({
-    firstName: Joi.string().trim().min(2).max(50).required(),
-    lastName: Joi.string().trim().min(2).max(50).required(),
-    email: Joi.string().trim().email({ tlds: { allow: false } }).required(),
-    phone: Joi.string().pattern(/^0\d{9}$/).allow('', null),
-    password: Joi.when('source', {
-        is: 'local',
-        then: Joi.string()
-            .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}$"))
-            .required(),
-        otherwise: Joi.string().optional()
-    }),
+    firstName: Joi.string().trim().min(2).max(50).required()
+        .messages({ 'string.min': 'First name must be at least 2 characters' }),
+
+    lastName: Joi.string().trim().min(2).max(50).required()
+        .messages({ 'string.min': 'Last name must be at least 2 characters' }),
+
+    email: Joi.string().trim().email({ tlds: { allow: false } }).required()
+        .messages({ 'string.email': 'Email must be a valid address' }),
+
+    // ✅ PHONE IS NOW REQUIRED FOR BOTH ROLES
+    phone: Joi.string()
+        .pattern(/^0\d{9}$/)
+        .required()
+        .messages({
+            "string.pattern.base": "Phone number must be a valid 10-digit Ghana number (e.g. 0559090182)",
+            "any.required": "Phone number is required"
+        }),
+
+    // ✅ PASSWORD REQUIRED (LOCAL REGISTRATION ONLY)
+    password: Joi.string()
+        .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}$"))
+        .required()
+        .messages({
+            'string.pattern.base': 'Password must be at least 8 characters, including uppercase, lowercase, and a number.',
+            'any.required': 'Password is required'
+        }),
+
     avatar: Joi.string().uri().optional(),
-    role: Joi.string().valid('potchef', 'potlucky').required(),
-    source: Joi.string().valid('local', 'google').default('local'),
 
-    // ✅ Only allow bank payout details
-    payoutDetails: Joi.when('role', {
-        is: 'potchef',
-        then: Joi.object({
-            type: Joi.string().valid('bank').required(),
-            bank: Joi.object({
-                bankCode: Joi.string().required(),
-                accountNumber: Joi.string().required(),
-                accountName: Joi.string().required()
-            }).required()
-        }).required(),
-        otherwise: Joi.forbidden()
+    role: Joi.string()
+        .valid('potchef', 'potlucky')
+        .required()
+        .messages({
+            'any.only': 'Role must be either potchef or potlucky'
+        }),
+
+    // ✅ ONLY LOCAL REGISTRATION ALLOWED
+    source: Joi.string().valid('local').default('local'),
+
+    // ✅ PAYOUTDETAILS NOT ALLOWED DURING REGISTRATION
+    payoutDetails: Joi.forbidden().messages({
+        'any.unknown': 'payoutDetails should not be provided during registration'
     })
+
+}).messages({
+    'any.required': 'This field is required',
 });
 
-
-export const googleAuthValidator = Joi.object({
-    token: Joi.string().required(),
-    role: Joi.string().valid('potlucky').default('potlucky').messages({
-        'any.only': 'Google signup is only available for potlucky users'
-    })
-});
+// ✅ REMOVE GOOGLE OAUTH VALIDATOR (NOT USED IN MVP)
+// export const googleAuthValidator = Joi.object({ ... });
 
 export const updateUserValidator = Joi.object({
     firstName: Joi.string().min(2).max(50),
     lastName: Joi.string().min(2).max(50),
+
+    // ✅ PHONE REQUIRED FOR PROFILE UPDATES TOO
     phone: Joi.string()
         .pattern(/^0\d{9}$/)
-        .allow('', null)
+        .required()
         .messages({
-            "string.pattern.base": "Phone must start with 0 and be 10 digits"
+            "string.pattern.base": "Phone must be a valid 10-digit Ghana number starting with 0"
         }),
-    avatar: Joi.string().uri(),
+
+    avatar: Joi.string().uri().optional(),
     password: Joi.string().min(8).optional(),
 
-    // Update payout details (for potchefs only)
+    // Update payout details (for potchefs only during profile completion)
     payoutDetails: Joi.object({
-        type: Joi.string().valid('bank'),  // remove 'mobileMoney'
+        type: Joi.string().valid('bank').required(),
         bank: Joi.object({
-            bankCode: Joi.string(),
-            accountNumber: Joi.string(),
-            accountName: Joi.string()
+            bankCode: Joi.string().required(),
+            accountNumber: Joi.string().required(),
+            accountName: Joi.string().required()
         }).required()
     }).optional()
 });
@@ -139,9 +81,15 @@ export const updateUserValidator = Joi.object({
 export const adminUpdateUserValidator = Joi.object({
     firstName: Joi.string().min(2).max(50),
     lastName: Joi.string().min(2).max(50),
-    phone: Joi.string().pattern(/^0\d{9}$/).messages({
-        "string.pattern.base": "Phone must start with 0 and be 10 digits"
-    }),
+
+    // ✅ PHONE REQUIRED FOR ADMIN UPDATES TOO
+    phone: Joi.string()
+        .pattern(/^0\d{9}$/)
+        .required()
+        .messages({
+            "string.pattern.base": "Phone must be a valid 10-digit Ghana number starting with 0"
+        }),
+
     avatar: Joi.string().uri(),
     role: Joi.string().valid('potchef', 'potlucky', 'admin'),
     status: Joi.string().valid('pending', 'approved', 'rejected', 'active'),
@@ -151,11 +99,31 @@ export const adminUpdateUserValidator = Joi.object({
     // Admin can update paystack details
     paystack: Joi.object({
         subaccountCode: Joi.string(),
-        subaccountId: Joi.string(),
         settlementBank: Joi.string(),
         accountNumber: Joi.string(),
         percentageCharge: Joi.number().min(0).max(100)
     }).optional()
+});
+
+// ✅ NEW VALIDATOR FOR POTCHEF PROFILE COMPLETION
+export const completePotchefProfileValidator = Joi.object({
+    // ✅ PHONE REQUIRED (SAME AS REGISTRATION)
+    phone: Joi.string()
+        .pattern(/^0\d{9}$/)
+        .required()
+        .messages({
+            "string.pattern.base": "Phone must be a valid 10-digit Ghana number starting with 0"
+        }),
+
+    // ✅ PAYOUT DETAILS REQUIRED FOR POTCHEF PROFILE COMPLETION
+    payoutDetails: Joi.object({
+        type: Joi.string().valid('bank').required(),
+        bank: Joi.object({
+            bankCode: Joi.string().required(),
+            accountNumber: Joi.string().required(),
+            accountName: Joi.string().required()
+        }).required()
+    }).required()
 });
 
 export const createSubaccountValidator = Joi.object({
@@ -202,7 +170,7 @@ export const resetPasswordValidator = Joi.object({
 });
 
 export const updatePayoutDetailsValidator = Joi.object({
-    type: Joi.string().valid("bank").required(), // ✅ only bank allowed
+    type: Joi.string().valid("bank").required(),
     bank: Joi.object({
         bankCode: Joi.string().required(),
         accountNumber: Joi.string().required(),

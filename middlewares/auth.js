@@ -1,18 +1,68 @@
-import { expressjwt } from "express-jwt";
 import jwt from "jsonwebtoken";
 import { permissions } from "../utils/rbac.js";
 import { UserModel } from "../models/users.js";
+import { refreshAccessToken } from '../utils/tokenUtils.js';
 
-export const isAuthenticated = expressjwt({
-    secret: process.env.JWT_PRIVATE_KEY,
-    algorithms: ["HS256"],
-    getToken: (req) => {
-        if (req.headers.authorization?.startsWith("Bearer ")) {
-            return req.headers.authorization.split(" ")[1];
-        }
-        return null;
+const getTokenFromHeader = (req) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.split(' ')[1];
     }
-});
+    return null;
+};
+
+export const isAuthenticated = async (req, res, next) => {
+    try {
+        const accessToken = getTokenFromHeader(req);
+
+        if (!accessToken) {
+            return res.status(401).json({ error: "Access token required" });
+        }
+
+        try {
+            // Try to verify access token first
+            const decoded = jwt.verify(accessToken, process.env.JWT_PRIVATE_KEY);
+
+            if (decoded.type !== 'access') {
+                return res.status(401).json({ error: "Invalid token type" });
+            }
+
+            req.auth = decoded;
+            return next();
+
+        } catch (accessError) {
+            // Access token expired or invalid, try refresh token
+            if (accessError.name !== 'TokenExpiredError') {
+                return res.status(401).json({ error: "Invalid access token" });
+            }
+
+            const refreshToken = req.headers['x-refresh-token'];
+
+            if (!refreshToken) {
+                return res.status(401).json({ error: "Session expired. Please login again." });
+            }
+
+            try {
+                const newTokens = await refreshAccessToken(refreshToken);
+
+                // Set new tokens in response headers
+                res.set({
+                    'X-New-Access-Token': newTokens.accessToken,
+                    'X-Token-Expires-In': '900' // 15 minutes
+                });
+
+                req.auth = jwt.verify(newTokens.accessToken, process.env.JWT_PRIVATE_KEY);
+                next();
+
+            } catch (refreshError) {
+                return res.status(401).json({ error: "Session expired. Please login again." });
+            }
+        }
+    } catch (error) {
+        res.status(401).json({ error: "Authentication failed" });
+    }
+};
+
 
 export const hasPermission = (action) => {
     return async (req, res, next) => {
@@ -46,40 +96,26 @@ export const hasPermission = (action) => {
 // middlewares/tempAuth.js
 export const allowTempAuth = (req, res, next) => {
     try {
-        console.log("=== TEMP AUTH MIDDLEWARE ===");
-        console.log("Full headers:", req.headers);
-
         const authHeader = req.headers.authorization;
-        console.log("Auth header:", authHeader);
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            console.log("No Bearer token found");
             return res.status(401).json({ error: "Temp token required" });
         }
 
         const token = authHeader.replace('Bearer ', '');
-        console.log("Extracted token:", token);
-        console.log("JWT Secret length:", process.env.JWT_PRIVATE_KEY?.length);
-
         const decoded = jwt.verify(token, process.env.JWT_PRIVATE_KEY);
-        console.log("Decoded token:", decoded);
 
-        if (!decoded.temp) {
-            console.log("Token missing temp flag");
-            return res.status(401).json({ error: "Invalid temp token" });
+        if (!decoded.temp || decoded.scope !== 'profile_completion') {
+            return res.status(401).json({ error: "Invalid temp token type" });
         }
 
-        req.auth = { id: decoded.id, temp: true };
-        console.log("Authentication successful");
+        req.auth = decoded;
         next();
 
     } catch (error) {
-        console.log("❌ Token verification error:", error.message);
-        console.log("Error stack:", error.stack);
         res.status(401).json({ error: "Invalid or expired temp token" });
     }
 };
-
 
 // export const isAuthenticated = expressjwt({
 //     secret: process.env.JWT_PRIVATE_KEY,

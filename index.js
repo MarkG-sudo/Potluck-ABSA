@@ -9,7 +9,7 @@ import reviewMealRouter from "./routes/mealReview.js";
 import orderRouter from "./routes/mealOrder.js";
 import adminRouter from "./routes/adminApproval.js";
 import franchiseeRouter from "./routes/franchisee.js";
-import gAuthRouter from "./routes/auth.js";
+import gAuthRouter from "./routes/g-auth.js";
 import notificationRouter from "./routes/notifications.js";
 import bankRouter from "./utils/bank acc.js";
 import completeProfileRouter from "./routes/completeProfile.js";
@@ -43,8 +43,6 @@ app.use(cors());
 app.set('trust proxy', 1);
 app.use(passport.initialize());
 
-// Initialize Passport WITHOUT sessions
-app.use(passport.initialize());
 
 // Register routes
 app.use(userRouter);

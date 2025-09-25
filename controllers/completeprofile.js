@@ -1,91 +1,89 @@
 import { UserModel } from "../models/users.js";
-import { updatePayoutDetailsValidator } from "../validators/users.js";
-import bcrypt from "bcryptjs";
+import { completePotchefProfileValidator } from "../validators/users.js";
 import axios from "axios";
 
-export const completeUserProfile = async (req, res, next) => {
+
+export const completePotchefProfile = async (req, res, next) => {
     try {
-        let user = await UserModel.findById(req.auth.id);
+        const user = await UserModel.findById(req.auth.id);
 
         if (!user) {
             return res.status(404).json({ error: "User not found" });
         }
 
-        // ✅ Potchefs must provide payout details
-        if (user.role === "potchef") {
-            console.log("Validating payout details...");
+        if (user.role !== "potchef") {
+            return res.status(400).json({ error: "This endpoint is for potchef profile completion only" });
+        }
 
-            const { error, value } = updatePayoutDetailsValidator.validate(req.body.payoutDetails);
-            if (error) {
-                return res.status(400).json({ error: error.details.map(d => d.message) });
-            }
+        // ✅ Prevent re-completion
+        if (user.profileCompleted) {
+            return res.status(400).json({
+                error: "Profile already completed. Use the update endpoint for changes."
+            });
+        }
 
-            // ✅ Restrict to bank-only payouts
-            if (value.type !== "bank") {
-                return res.status(400).json({ error: "Only bank payout details are supported at this time." });
-            }
+        const { error, value } = completePotchefProfileValidator.validate(req.body);
+        if (error) {
+            return res.status(422).json({ error: error.details.map(d => d.message) });
+        }
 
-            // ✅ Update payout details
-            user.payoutDetails = value;
+        const { phone, payoutDetails } = value;
 
-            // ✅ Create Paystack subaccount if not already created
-            if (!user.paystack?.subaccountCode) {
-                try {
-                    const subRes = await axios.post(
-                        "https://api.paystack.co/subaccount",
-                        {
-                            business_name: `${user.firstName} ${user.lastName}`,
-                            settlement_bank: value.bank.bankCode,
-                            account_number: value.bank.accountNumber,
-                            percentage_charge: 15, // Potluck takes 15%
-                            currency: "GHS"
-                        },
-                        { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-                    );
+        // ✅ Validate phone format
+        if (!/^0\d{9}$/.test(phone)) {
+            return res.status(422).json({
+                error: "Phone number must be a valid 10-digit Ghana number starting with 0"
+            });
+        }
 
-                    user.paystack = {
-                        subaccountCode: subRes.data.data.subaccount_code,
-                        subaccountId: subRes.data.data.id,
-                        settlementBank: value.bank.bankCode,
-                        accountNumber: value.bank.accountNumber,
-                        percentageCharge: 15
-                    };
-                } catch (paystackError) {
-                    console.error("❌ Paystack subaccount creation failed:", paystackError.response?.data || paystackError.message);
+        user.phone = phone;
+
+        // ✅ Paystack integration
+        let paystackSubaccount = null;
+        try {
+            const subRes = await axios.post(
+                "https://api.paystack.co/subaccount",
+                {
+                    business_name: `${user.firstName} ${user.lastName}`.substring(0, 100),
+                    settlement_bank: payoutDetails.bank.bankCode,
+                    account_number: payoutDetails.bank.accountNumber,
+                    percentage_charge: 15,
+                    currency: "GHS"
+                },
+                {
+                    headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+                    timeout: 10000
                 }
-            }
-        }
-
-        // ✅ Handle phone update
-        const { phone, password } = req.body || {};
-        if (phone !== undefined) {
-            user.phone = phone === '' || phone === null ? undefined : phone;
-        }
-
-        // ✅ Handle password update
-        if (password) {
-            user.password = await bcrypt.hash(password, 10);
-            if (user.source === "google") {
-                user.source = "local"; // Switch to local login
-            }
-        }
-
-        // ✅ Check if profile is complete
-        if (user.role === "potchef") {
-            user.profileCompleted = !!(
-                user.phone &&
-                user.payoutDetails?.bank?.bankCode &&
-                user.payoutDetails?.bank?.accountNumber
             );
-        } else {
-            user.profileCompleted = !!user.phone;
+            paystackSubaccount = subRes.data.data.subaccount_code;
+        } catch (paystackError) {
+            console.error("❌ Paystack subaccount creation failed:", paystackError.response?.data);
+            return res.status(400).json({
+                error: "Bank account verification failed. Please check your bank details."
+            });
         }
+
+        user.payoutDetails = payoutDetails;
+        user.paystack = {
+            subaccountCode: paystackSubaccount,
+            settlementBank: payoutDetails.bank.bankCode,
+            accountNumber: payoutDetails.bank.accountNumber,
+            percentageCharge: 15
+        };
+
+        // ✅ CRITICAL FIX: Explicitly set profileCompleted to true
+        user.profileCompleted = true;
 
         await user.save();
 
         res.json({
-            message: "Profile updated successfully",
-            user: { ...user.toObject(), password: undefined }
+            message: "Profile completed successfully",
+            profileCompleted: user.profileCompleted, // Will now be true
+            status: user.status, // "pending"
+            user: {
+                ...user.toObject(),
+                password: undefined
+            }
         });
     } catch (err) {
         next(err);
@@ -103,28 +101,36 @@ export const getProfileCompletionStatus = async (req, res, next) => {
 
         let missingFields = [];
 
-        if (!user.phone) missingFields.push("phone number");
+        // ✅ Phone is required for both roles
+        if (!user.phone || user.phone.trim() === "") {
+            missingFields.push("phone number");
+        }
 
+        // ✅ Payout details only required for potchefs
         if (user.role === "potchef") {
-            if (!user.payoutDetails) {
-                missingFields.push("payout details");
-            } else {
-                if (!user.payoutDetails.bank?.bankCode) missingFields.push("bank code");
-                if (!user.payoutDetails.bank?.accountNumber) missingFields.push("account number");
-                if (!user.payoutDetails.bank?.accountName) missingFields.push("account name");
+            if (!user.payoutDetails?.bank?.bankCode || user.payoutDetails.bank.bankCode.trim() === "") {
+                missingFields.push("bank code");
+            }
+            if (!user.payoutDetails?.bank?.accountNumber || user.payoutDetails.bank.accountNumber.trim() === "") {
+                missingFields.push("account number");
+            }
+            if (!user.payoutDetails?.bank?.accountName || user.payoutDetails.bank.accountName.trim() === "") {
+                missingFields.push("account name");
             }
         }
+
+        const completionPercentage = user.profileCompleted ? 100 : Math.max(0, 100 - (missingFields.length * 25));
 
         res.json({
             profileCompleted: user.profileCompleted,
             missingFields,
-            completionPercentage: user.profileCompleted ? 100 : Math.max(0, 100 - (missingFields.length * 25))
+            completionPercentage,
+            requiresAction: user.role === "potchef" && !user.profileCompleted
         });
     } catch (err) {
         next(err);
     }
 };
-
 
 // import { UserModel } from "../models/users.js";
 // import { updatePayoutDetailsValidator } from "../validators/users.js";

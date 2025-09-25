@@ -12,6 +12,11 @@ export const approveUser = async (req, res, next) => {
         const { id } = req.params;
         const { action, notes } = req.body;
 
+        // ✅ Validate ID format
+        if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ error: "Invalid user ID format" });
+        }
+
         if (!["approve", "reject"].includes(action)) {
             return res.status(400).json({ error: "Invalid action. Use 'approve' or 'reject'." });
         }
@@ -19,16 +24,15 @@ export const approveUser = async (req, res, next) => {
         const user = await UserModel.findById(id);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Check current status
+        // ✅ Check if user is already in final state
         if (user.status === "approved" && action === "approve") {
             return res.status(400).json({ error: "User is already approved" });
         }
-
         if (user.status === "rejected" && action === "reject") {
             return res.status(400).json({ error: "User is already rejected" });
         }
 
-        // ✅ NEW: Prevent approval of potchefs without complete profile
+        // ✅ Prevent approval of incomplete potchefs
         if (action === "approve" && user.role === "potchef" && !user.profileCompleted) {
             return res.status(400).json({
                 error: "Cannot approve chef. Profile must be completed with payout details first."
@@ -36,19 +40,21 @@ export const approveUser = async (req, res, next) => {
         }
 
         if (action === "approve") {
-            // Update user status
             user.status = "approved";
             user.approvedAt = new Date();
             await user.save();
 
-            // 📧 Send approval email
+            // ✅ Email sending (your code is perfect)
             const emailTemplatePath = path.join(__dirname, "../utils/account-approved-mail.html");
             if (fs.existsSync(emailTemplatePath)) {
                 let html = fs.readFileSync(emailTemplatePath, "utf-8");
                 html = html.replace(/{{firstName}}/g, user.firstName);
 
                 await sendEmail({
-                    from: '"Potluck" <no-reply@potluck.app>',
+                    from: {
+                        name: process.env.SMTP_FROM_NAME,
+                        email: process.env.SMTP_FROM_EMAIL
+                    },
                     to: user.email,
                     subject: "✅ Your Potluck account is approved!",
                     html,
@@ -60,12 +66,10 @@ export const approveUser = async (req, res, next) => {
                 user: { ...user.toObject(), password: undefined }
             });
         } else {
-            // Reject action
             user.status = "rejected";
-            user.rejectionNotes = notes; // Optional: store rejection reason
+            user.rejectionNotes = notes;
             await user.save();
 
-            // 📧 Send rejection email
             const emailTemplatePath = path.join(__dirname, "../utils/account-rejected-mail.html");
             if (fs.existsSync(emailTemplatePath)) {
                 let html = fs.readFileSync(emailTemplatePath, "utf-8");
@@ -73,7 +77,10 @@ export const approveUser = async (req, res, next) => {
                     .replace(/{{notes}}/g, notes || "No reason provided");
 
                 await sendEmail({
-                    from: '"Potluck" <no-reply@potluck.app>',
+                    from: {
+                        name: process.env.SMTP_FROM_NAME,
+                        email: process.env.SMTP_FROM_EMAIL
+                    },
                     to: user.email,
                     subject: "❌ Your Potluck account application",
                     html,
@@ -90,15 +97,20 @@ export const approveUser = async (req, res, next) => {
         next(err);
     }
 };
-
 // Get all pending users - ✅ Add profileCompleted info for admin dashboard
 export const getPendingUsers = async (req, res, next) => {
     try {
-        const users = await UserModel.find({ status: "pending" })
-            .select("-password -googleAccessToken -googleRefreshToken")
-            .lean(); // Use lean for better performance
+        const { page = 1, limit = 20 } = req.query;
+        const skip = (page - 1) * limit;
 
-        // ✅ Add profile completion status for admin UI
+        const users = await UserModel.find({ status: "pending" })
+            .select("-password")
+            .skip(skip)
+            .limit(parseInt(limit))
+            .lean();
+
+        const total = await UserModel.countDocuments({ status: "pending" });
+
         const usersWithCompletion = users.map(user => ({
             ...user,
             canBeApproved: user.role !== "potchef" || user.profileCompleted
@@ -106,6 +118,9 @@ export const getPendingUsers = async (req, res, next) => {
 
         res.json({
             count: users.length,
+            total,
+            page: parseInt(page),
+            pages: Math.ceil(total / limit),
             users: usersWithCompletion
         });
     } catch (err) {

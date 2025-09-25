@@ -50,14 +50,32 @@
             display: inline-block;
             background-color: #00A63E;
             color: white;
-            padding: 10px 20px;
-            margin-top: 20px;
-            border-radius: 4px;
+            padding: 12px 30px;
+            margin: 20px 0;
+            border-radius: 5px;
             text-decoration: none;
+            font-weight: bold;
+            text-align: center;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.3s;
         }
 
         a.button:hover {
             background-color: #007d2f;
+        }
+
+        /* Added for better email client compatibility */
+        .button-container {
+            text-align: center;
+            margin: 25px 0;
+        }
+
+        .backup-link {
+            color: #00A63E;
+            word-break: break-all;
+            font-size: 14px;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -73,10 +91,23 @@
                 features of your dashboard.</p>
 
             <p>Click the button below to access your account:</p>
-            <a href="https://potluck-africa.netlify.app/login" class="button">Go to Dashboard</a>
 
-            <p>If you need any help, just reply to this email or reach out to us at <a
-                    href="mailto:hello@potluck.africa">hello@potluck.africa</a>.</p>
+            <!-- Fixed button with better styling and backup link -->
+            <div class="button-container">
+                <a href="https://potluck-africa.netlify.app/login" class="button" target="_blank"
+                    style="display: inline-block; background-color: #00A63E; color: white; padding: 12px 30px; border-radius: 5px; text-decoration: none; font-weight: bold; cursor: pointer;">
+                    Go to Dashboard
+                </a>
+
+                <p class="backup-link">
+                    If the button doesn't work, copy and paste this link:<br>
+                    https://potluck-africa.netlify.app/login
+                </p>
+            </div>
+
+            <p>If you need any help, just reply to this email or reach out to us at
+                <a href="mailto:hello@potluck.africa" style="color: #00A63E;">hello@potluck.africa</a>.
+            </p>
 
             <p>Welcome aboard!<br>The Potluck Team</p>
         </div>
