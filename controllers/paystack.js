@@ -197,7 +197,7 @@ const sendPaymentSuccessNotifications = async (order) => {
         if (isValidEmail(order.buyer.email)) {
             try {
                 await sendEmail({
-                    from: {  
+                    from: {
                         name: process.env.SMTP_FROM_NAME,
                         email: process.env.SMTP_FROM_EMAIL
                     },
@@ -231,7 +231,7 @@ const sendPaymentSuccessNotifications = async (order) => {
         if (isValidEmail(order.chef.email)) {
             try {
                 await sendEmail({
-                    from: {  
+                    from: {
                         name: process.env.SMTP_FROM_NAME,
                         email: process.env.SMTP_FROM_EMAIL
                     },
@@ -257,49 +257,47 @@ const sendPaymentSuccessNotifications = async (order) => {
                 console.log(`✅ Chef email sent successfully`);
             } catch (emailError) {
                 console.error(`❌ Chef email failed:`, emailError.message);
-                // Optionally notify admin of email failure
+                // ✅ Notify admin of email failure - FIXED format
                 await NotificationModel.create({
-                    user: null,
+                    scope: 'system', // ✅ Added scope
                     title: "⚠ Chef Email Failed",
                     body: `Failed to send notification email to chef ${order.chef.email} for order ${shortId}`,
                     url: `/admin/orders/${order._id}`,
-                    type: "system",
-                    priority: "medium",
+                    type: "system", // ✅ Matches enum
                 });
             }
         } else {
             console.warn(`⚠️ Invalid chef email: ${order.chef.email}`);
+            // ✅ Invalid email notification - FIXED format
             await NotificationModel.create({
-                user: null,
+                scope: 'system', // ✅ Added scope
                 title: "⚠ Invalid Chef Email",
                 body: `Chef ${order.chef.firstName} has invalid email: ${order.chef.email}`,
                 url: `/admin/users/${order.chef._id}`,
-                type: "system",
-                priority: "high",
+                type: "system", // ✅ Matches enum
             });
         }
 
-        // 🗂️ Admin record
+        // ✅ Admin record - FIXED format
         await NotificationModel.create({
-            user: null,
+            scope: 'admin', // ✅ Added scope (removed user: null)
             title: "💰 New Payment Received",
             body: `Order #${shortId} paid successfully. Amount: GHS ${order.totalPrice}`,
             url: `/admin/orders/${order._id}`,
-            type: "payment",
+            type: "payment", // ✅ Matches enum
         });
 
         console.log(`✅ All notifications processed for order ${shortId}`);
 
     } catch (error) {
         console.error("❌ Notification sending failed completely:", error?.message || error);
-        // Critical failure - notify admin
+        // ✅ Critical failure - FIXED format
         await NotificationModel.create({
-            user: null,
+            scope: 'system', // ✅ Added scope
             title: "🚨 Notification System Failure",
             body: `Complete failure in sending notifications for order ${order._id}: ${error.message}`,
             url: "/admin/system",
-            type: "system",
-            priority: "high",
+            type: "system", // ✅ Matches enum
         });
     }
 };
@@ -307,16 +305,21 @@ const sendPaymentSuccessNotifications = async (order) => {
 
 const sendPaymentFailedNotifications = async (order, ps) => {
     try {
+        const shortId = order._id.toString().slice(-6);
+
         // 🔔 Push notification to buyer
         await sendUserNotification(order.buyer._id, {
             title: "❌ Payment Failed",
-            body: `Payment for order ${order._id.toString().slice(-6)} failed. Please try again.`,
+            body: `Payment for order ${shortId} failed. Please try again.`,
             url: `/dashboard/my-orders/${order._id}`,
         });
 
-        // 📧 Email to buyer
+        // 📧 Email to buyer - FIXED SendGrid format
         await sendEmail({
-            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+            from: {  // ✅ Correct SendGrid object format
+                name: process.env.SMTP_FROM_NAME,
+                email: process.env.SMTP_FROM_EMAIL
+            },
             to: order.buyer.email,
             subject: "Payment Failed - Order On Hold",
             html: `
@@ -327,20 +330,29 @@ const sendPaymentFailedNotifications = async (order, ps) => {
             `,
         });
 
-        // Admin record
+        // ✅ Admin record - FIXED NotificationModel format
         await NotificationModel.create({
-            user: null,
+            scope: 'admin', // ✅ Required scope field
             title: "❌ Payment Failed",
-            body: `Payment failed for Order #${order._id.toString().slice(-6)}. Reason: ${ps.gateway_response}`,
+            body: `Payment failed for Order #${shortId}. Reason: ${ps.gateway_response || "Unknown"}`,
             url: `/admin/orders/${order._id}`,
-            type: "payment",
-            priority: "high",
+            type: "payment", // ✅ Matches your updated enum
         });
 
     } catch (error) {
         console.warn("Failed payment notification error:", error?.message || error);
+
+        // ✅ System notification for failure - FIXED format
+        await NotificationModel.create({
+            scope: 'system', // ✅ Required scope field
+            title: "⚠ Payment Failure Notification Error",
+            body: `Error sending failed payment notifications for order ${shortId}: ${error.message}`,
+            url: `/admin/orders/${order._id}`,
+            type: "system", // ✅ Matches your enum
+        });
     }
 };
+
 
 const handlePaymentMismatch = async (order, ps, reference) => {
     await NotificationModel.create({

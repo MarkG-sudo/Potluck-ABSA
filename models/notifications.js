@@ -5,7 +5,16 @@ const notificationSchema = new Schema({
     user: {
         type: Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: function () {
+            // Required only for user-specific notifications
+            return this.scope === 'user';
+        }
+    },
+    scope: {
+        type: String,
+        enum: ['user', 'admin', 'system'],
+        required: true,
+        default: 'user'
     },
     title: {
         type: String,
@@ -25,7 +34,7 @@ const notificationSchema = new Schema({
     },
     type: {
         type: String,
-        enum: ['order', 'system', 'promo'],
+        enum: ['order', 'system', 'promo', 'payment', 'security', 'transfer'],
         default: 'order'
     }
 }, {
