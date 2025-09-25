@@ -10,14 +10,22 @@ const paystack = axios.create({
 
 
 // ✅ Initiate payment
-export const initiatePayment = async ({ email, amount, metadata, method, momo, subaccount, bearer = "subaccount" }) => {
+export const initiatePayment = async ({
+    email,
+    amount,
+    metadata,
+    method,
+    momo,
+    subaccount,
+    bearer = "subaccount" // Default to subaccount bearing charges
+}) => {
     if (!email) throw new Error("Customer email is required");
     if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
 
     try {
         const scaledAmount = Math.round(amount * 100); // Convert GHS to pesewas
 
-        // 🧾 Log basic payment info
+        // 🧾 Log comprehensive payment info
         console.log(`🔸 Initiating payment`);
         console.log(`   Email: ${email}`);
         console.log(`   Amount: GHS ${amount} → ${scaledAmount} pesewas`);
@@ -25,6 +33,11 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
         console.log(`   Subaccount: ${subaccount || "None (platform will receive full amount)"}`);
         console.log(`   Bearer: ${bearer}`);
         console.log(`   Metadata:`, metadata);
+
+        // ✅ Validate subaccount format if provided
+        if (subaccount && !subaccount.startsWith('ACCT_')) {
+            console.warn(`⚠️  Subaccount code format may be invalid: ${subaccount}`);
+        }
 
         const basePayload = {
             email,
@@ -44,6 +57,7 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
             console.log(`📱 Mobile Money Details`);
             console.log(`   Phone: ${momo.phone}`);
             console.log(`   Provider: ${momo.provider}`);
+            console.log(`   Endpoint: /charge`);
 
             res = await paystack.post("/charge", {
                 ...basePayload,
@@ -53,17 +67,33 @@ export const initiatePayment = async ({ email, amount, metadata, method, momo, s
                 },
             });
         } else {
+            const channels = method === "bank" ? ["bank"] : ["card", "bank"];
             console.log(`💳 Initializing card/bank transaction`);
+            console.log(`   Channels: ${channels.join(', ')}`);
+            console.log(`   Endpoint: /transaction/initialize`);
+
             res = await paystack.post("/transaction/initialize", {
                 ...basePayload,
-                channels: method === "bank" ? ["bank"] : ["card", "bank"],
+                channels: channels,
             });
         }
 
         console.log(`✅ Paystack response received`);
+        console.log(`   Status: ${res.data.status}`);
+        console.log(`   Message: ${res.data.message}`);
+        console.log(`   Reference: ${res.data.data?.reference}`);
+
+        if (res.data.data?.authorization_url) {
+            console.log(`   Authorization URL: Present (length: ${res.data.data.authorization_url.length})`);
+        }
+
         return res.data;
     } catch (err) {
-        console.error("❌ initiatePayment error:", err.response?.data || err.message);
+        console.error(`   Error Message: ${err.message}`);
+        console.error(`   HTTP Status: ${err.response?.status}`);
+        console.error(`   Paystack Error: ${JSON.stringify(err.response?.data)}`);
+        console.error(`   Request Data:`, err.config?.data);
+
         throw new Error(err.response?.data?.message || "Failed to initiate payment");
     }
 };

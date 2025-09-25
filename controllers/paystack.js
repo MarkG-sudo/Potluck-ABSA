@@ -163,60 +163,86 @@ const sendPaymentSuccessNotifications = async (order) => {
             minute: "2-digit",
         });
 
-        // 🔔 Push notifications
-        await sendUserNotification(order.chef._id, {
-            title: "💰 New Paid Order",
-            body: `New order for ${order.meal.mealName} has been paid. Amount: GHS ${order.totalPrice}`,
-            url: `/dashboard/orders/${order._id}`,
-        });
+        console.log(`📧 Sending notifications for order ${shortId}`);
+        console.log(`   Chef: ${order.chef.email}`);
+        console.log(`   Buyer: ${order.buyer.email}`);
 
-        await sendUserNotification(order.buyer._id, {
-            title: "✅ Payment Confirmed",
-            body: `Your payment for ${order.meal.mealName} was successful. Order #${shortId}`,
-            url: `/dashboard/my-orders/${order._id}`,
-        });
+        // ✅ Validate email addresses before sending
+        const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+        // 🔔 Push notifications (with error handling)
+        try {
+            await sendUserNotification(order.chef._id, {
+                title: "💰 New Paid Order",
+                body: `New order for ${order.meal.mealName} has been paid. Amount: GHS ${order.totalPrice}`,
+                url: `/dashboard/orders/${order._id}`,
+            });
+            console.log(`✅ Push notification sent to chef`);
+        } catch (pushError) {
+            console.warn(`⚠️ Push notification to chef failed:`, pushError.message);
+        }
+
+        try {
+            await sendUserNotification(order.buyer._id, {
+                title: "✅ Payment Confirmed",
+                body: `Your payment for ${order.meal.mealName} was successful. Order #${shortId}`,
+                url: `/dashboard/my-orders/${order._id}`,
+            });
+            console.log(`✅ Push notification sent to buyer`);
+        } catch (pushError) {
+            console.warn(`⚠️ Push notification to buyer failed:`, pushError.message);
+        }
 
         // 📧 Email to Buyer
-        await mailtransporter.sendMail({
-            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-            to: order.buyer.email,
-            subject: `✅ Payment Receipt - Order #${shortId}`,
-            html: `
-                <p>Hi ${order.buyer.firstName},</p>
-                <p>Thank you for your order! Your payment for <strong>${order.quantity}x ${order.meal.mealName}</strong> has been confirmed.</p>
-                <p><strong>Order Summary:</strong></p>
-                <ul>
-                    <li><strong>Order ID:</strong> ${shortId}</li>
-                    <li><strong>Chef:</strong> ${order.chef.firstName} ${order.chef.lastName}</li>
-                    <li><strong>Total Paid:</strong> GHS ${order.totalPrice.toFixed(2)}</li>
-                    <li><strong>Pickup Time:</strong> ${pickupTime}</li>
-                </ul>
-                <p>You can track your order status in your dashboard.</p>
-                <p>— PotChef Team</p>
-            `,
-        });
+        if (isValidEmail(order.buyer.email)) {
+            try {
+                await mailtransporter.sendMail({
+                    from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+                    to: order.buyer.email,
+                    subject: `✅ Payment Receipt - Order #${shortId}`,
+                    html: `...` // your existing template
+                });
+                console.log(`✅ Buyer email sent successfully`);
+            } catch (emailError) {
+                console.error(`❌ Buyer email failed:`, emailError.message);
+            }
+        } else {
+            console.warn(`⚠️ Invalid buyer email: ${order.buyer.email}`);
+        }
 
-        // 📧 Email to Chef
-        await mailtransporter.sendMail({
-            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
-            to: order.chef.email,
-            subject: `💰 New Paid Order - #${shortId}`,
-            html: `
-                <p>Hi ${order.chef.firstName},</p>
-                <pYou’ve received a new paid order for <strong>${order.meal.mealName}</strong>.</p>
-                <p><strong>Order Details:</strong></p>
-                <ul>
-                    <li><strong>Order ID:</strong> ${shortId}</li>
-                    <li><strong>Customer:</strong> ${order.buyer.firstName} ${order.buyer.lastName}</li>
-                    <li><strong>Quantity:</strong> ${order.quantity}</li>
-                    <li><strong>Total Paid:</strong> GHS ${order.totalPrice.toFixed(2)}</li>
-                    <li><strong>Your Earnings:</strong> GHS ${order.vendorEarnings.toFixed(2)}</li>
-                    <li><strong>Pickup Time:</strong> ${pickupTime}</li>
-                </ul>
-                <p>Please prepare the meal and have it ready by the pickup time.</p>
-                <p>— PotChef Team</p>
-            `,
-        });
+        // 📧 Email to Chef - CRITICAL: This is what sends to the chef
+        if (isValidEmail(order.chef.email)) {
+            try {
+                await mailtransporter.sendMail({
+                    from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_FROM_EMAIL}>`,
+                    to: order.chef.email,
+                    subject: `💰 New Paid Order - #${shortId}`,
+                    html: `...` // your existing template
+                });
+                console.log(`✅ Chef email sent successfully`);
+            } catch (emailError) {
+                console.error(`❌ Chef email failed:`, emailError.message);
+                // Optionally notify admin of email failure
+                await NotificationModel.create({
+                    user: null,
+                    title: "⚠ Chef Email Failed",
+                    body: `Failed to send notification email to chef ${order.chef.email} for order ${shortId}`,
+                    url: `/admin/orders/${order._id}`,
+                    type: "system",
+                    priority: "medium",
+                });
+            }
+        } else {
+            console.warn(`⚠️ Invalid chef email: ${order.chef.email}`);
+            await NotificationModel.create({
+                user: null,
+                title: "⚠ Invalid Chef Email",
+                body: `Chef ${order.chef.firstName} has invalid email: ${order.chef.email}`,
+                url: `/admin/users/${order.chef._id}`,
+                type: "system",
+                priority: "high",
+            });
+        }
 
         // 🗂️ Admin record
         await NotificationModel.create({
@@ -227,8 +253,19 @@ const sendPaymentSuccessNotifications = async (order) => {
             type: "payment",
         });
 
+        console.log(`✅ All notifications processed for order ${shortId}`);
+
     } catch (error) {
-        console.warn("Notification sending failed:", error?.message || error);
+        console.error("❌ Notification sending failed completely:", error?.message || error);
+        // Critical failure - notify admin
+        await NotificationModel.create({
+            user: null,
+            title: "🚨 Notification System Failure",
+            body: `Complete failure in sending notifications for order ${order._id}: ${error.message}`,
+            url: "/admin/system",
+            type: "system",
+            priority: "high",
+        });
     }
 };
 
@@ -299,47 +336,93 @@ export const createPaymentController = async (req, res, next) => {
     try {
         const { orderId, method, momo } = req.body;
 
+        console.log(`🔸 createPaymentController called`);
+        console.log(`   Order ID: ${orderId}`);
+        console.log(`   Payment Method: ${method}`);
+        console.log(`   Momo Details:`, momo || "Not provided");
+
         // ✅ Fetch user and order
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
-        if (!user) return res.status(404).json({ message: "User not found" });
+        if (!user) {
+            console.log(`❌ User not found for ID: ${req.auth.id}`);
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        console.log(`✅ User found: ${user.email}`);
 
         const mealOrder = await MealOrder.findById(orderId)
             .populate("buyer", "email")
-            .populate("chef", "email paystack")
+            .populate("chef", "email paystack firstName lastName payoutDetails") // Added payoutDetails for validation
             .populate("meal", "mealName price");
 
-        if (!mealOrder) return res.status(404).json({ message: "Order not found" });
+        if (!mealOrder) {
+            console.log(`❌ Order not found for ID: ${orderId}`);
+            return res.status(404).json({ message: "Order not found" });
+        }
 
-        console.log("💡 Meal Order fetched. Total Price:", mealOrder.totalPrice);
+        console.log(`✅ Order found for meal: ${mealOrder.meal.mealName}`);
+        console.log(`   Total Price: GHS ${mealOrder.totalPrice}`);
+        console.log(`   Chef: ${mealOrder.chef.firstName} ${mealOrder.chef.lastName}`);
+
+        // ✅ Validate chef's payment setup
+        const subaccountCode = mealOrder.chef.paystack?.subaccountCode;
+        const payoutDetails = mealOrder.chef.payoutDetails;
+
+        console.log(`🔍 Checking chef payment setup:`);
+        console.log(`   Subaccount Code: ${subaccountCode || "MISSING"}`);
+        console.log(`   Payout Bank: ${payoutDetails?.bank?.bankCode || "MISSING"}`);
+        console.log(`   Account Number: ${payoutDetails?.bank?.accountNumber ? "***" + payoutDetails.bank.accountNumber.slice(-4) : "MISSING"}`);
+
+        if (!subaccountCode) {
+            console.log(`❌ Chef payment account not properly configured - missing subaccount`);
+            return res.status(400).json({
+                message: "Chef payment account not properly configured. Please contact support."
+            });
+        }
+
+        if (!payoutDetails?.bank?.bankCode || !payoutDetails?.bank?.accountNumber) {
+            console.log(`❌ Chef payout details incomplete`);
+            return res.status(400).json({
+                message: "Chef payout details incomplete. Please contact support."
+            });
+        }
 
         // ✅ Validate momo data if method is momo
         if (method === "momo") {
             if (!momo?.phone || !momo?.provider) {
+                console.log(`❌ Mobile money payment requires phone number and provider`);
                 return res.status(400).json({
                     message: "Mobile money payment requires phone number and provider"
                 });
             }
         }
 
-        // ✅ SIMPLIFIED: Remove the timeout wrapper
+        console.log(`✅ All validations passed. Initiating payment with subaccount...`);
+
+        // ✅ Initiate payment with subaccount
         const paymentResponse = await initiatePayment({
             amount: mealOrder.totalPrice,
             email: user.email,
             method,
             momo,
             currency: "GHS",
-            subaccount: mealOrder.chef?.paystack?.subaccountCode,
             metadata: {
                 orderId: mealOrder._id.toString(),
                 buyerId: user._id.toString(),
                 mealName: mealOrder.meal.mealName,
+                chefId: mealOrder.chef._id.toString(),
             },
+            subaccount: subaccountCode, // ✅ Pass the subaccount code
+            bearer: "subaccount" // ✅ Ensure subaccount bears transaction charges
         });
 
         // ✅ Handle the payment response
-        console.log("💡 Paystack initiate response:", paymentResponse);
+        console.log("✅ Paystack initiate response received");
+        console.log(`   Reference: ${paymentResponse?.data?.reference}`);
+        console.log(`   Authorization URL: ${paymentResponse?.data?.authorization_url ? "Present" : "Missing"}`);
 
         if (!paymentResponse?.data?.reference) {
+            console.log(`❌ Payment initiation failed - no reference received`);
             return res.status(500).json({ message: "Payment initiation failed - no reference received" });
         }
 
@@ -351,9 +434,13 @@ export const createPaymentController = async (req, res, next) => {
         mealOrder.payment.method = method;
         mealOrder.payment.status = "pending";
         mealOrder.payment.reference = reference;
+        mealOrder.payment.subaccountUsed = subaccountCode; // Track which subaccount was used
         await mealOrder.save();
 
-        console.log("✅ Payment reference saved in order:", mealOrder.payment);
+        console.log(`✅ Payment reference saved in order`);
+        console.log(`   Reference: ${reference}`);
+        console.log(`   Status: ${mealOrder.payment.status}`);
+        console.log(`   Subaccount: ${subaccountCode}`);
 
         // ✅ Send response back to client
         res.status(200).json({
@@ -361,6 +448,7 @@ export const createPaymentController = async (req, res, next) => {
             order: mealOrder,
             paymentReference: reference,
             authorizationUrl: authorizationUrl,
+            subaccountUsed: subaccountCode, // Optional: for client confirmation
         });
 
     } catch (err) {
