@@ -45,6 +45,8 @@ export const approveUser = async (req, res, next) => {
             user.approvedBy = req.auth?.id;
             await user.save();
 
+            const populatedUser = await UserModel.findById(user._id).populate('approvedBy', 'firstName lastName email role');
+
             // ✅ Email sending (your code is perfect)
             const emailTemplatePath = path.join(__dirname, "../utils/account-approved-mail.html");
             if (fs.existsSync(emailTemplatePath)) {
@@ -72,8 +74,8 @@ export const approveUser = async (req, res, next) => {
                     role: user.role,
                     status: user.status,
                     profileCompleted: user.profileCompleted,
-                    approvedAt: user.approvedAt,
-                    approvedBy: user.approvedBy
+                    approvedAt: populatedUser.approvedAt,
+                    approvedBy: populatedUser.approvedBy
                     
                 }
             });
