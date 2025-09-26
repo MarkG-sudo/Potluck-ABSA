@@ -1,5 +1,5 @@
 import { UserModel } from "../models/users.js";
-import { registerUserValidator, loginUserValidator, updateUserValidator } from "../validators/users.js";
+import { registerUserValidator, loginUserValidator, updateUserValidator, registerAdminValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendEmail } from "../utils/mail.js";
@@ -412,7 +412,7 @@ export const updateUser = async (req, res, next) => {
     }
 };
 
-// controllers/users.js
+
 export const refreshToken = async (req, res, next) => {
     try {
         const refreshToken = req.headers['x-refresh-token'];
@@ -435,6 +435,91 @@ export const refreshToken = async (req, res, next) => {
         res.status(401).json({ error: "Token refresh failed: " + error.message });
     }
 };
+
+
+export const registerAdminBySuperAdmin = async (req, res) => {
+    try {
+        // ✅ Ensure requester is a super admin
+        const requester = req.auth; 
+        if (!requester || requester.role !== 'superadmin') {
+            return res.status(403).json({ message: "Forbidden: Only super admins can create admin accounts" });
+        }
+
+        // ✅ Validate input using admin-specific validator
+        const { error, value } = registerAdminValidator.validate(req.body);
+        if (error) {
+            return res.status(422).json({ error: error.details.map(d => d.message) });
+        }
+
+        const { firstName, lastName, email, phone, password } = value;
+
+        // ✅ Check if user already exists
+        const userExists = await UserModel.findOne({ email });
+        if (userExists) {
+            return res.status(400).json({ message: "Email already in use" });
+        }
+
+        // ✅ Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // ✅ Create admin user
+        const user = await UserModel.create({
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: email.toLowerCase().trim(),
+            phone: phone.trim(),
+            password: hashedPassword,
+            role: "admin",
+            status: "active",
+            source: "created_by_superadmin"
+        });
+
+        // ✅ Send welcome email to new admin
+        try {
+            const adminTemplatePath = path.join(__dirname, "../utils/admin-created-mail.html");
+
+            if (fs.existsSync(adminTemplatePath)) {
+                let adminEmailHTML = fs.readFileSync(adminTemplatePath, "utf-8");
+                adminEmailHTML = adminEmailHTML.replace(/{{firstName}}/g, firstName || "");
+
+                await sendEmail({
+                    from: {
+                        name: process.env.SMTP_FROM_NAME,
+                        email: process.env.SMTP_FROM_EMAIL
+                    },
+                    to: email,
+                    subject: "Welcome to Potluck Admin Panel",
+                    html: adminEmailHTML,
+                });
+            } else {
+                console.warn("Admin welcome template not found");
+            }
+        } catch (emailError) {
+            console.error("Admin welcome email failed:", emailError);
+        }
+
+        res.status(201).json({
+            message: "Admin account created successfully",
+            user: {
+                id: user._id,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                phone: user.phone,
+                role: user.role,
+                status: user.status
+            }
+        });
+
+    } catch (err) {
+        console.error("Admin registration error:", err);
+        res.status(500).json({
+            message: "Admin registration failed",
+            error: process.env.NODE_ENV === 'development' ? err.message : "Internal server error"
+        });
+    }
+};
+
 
 
 

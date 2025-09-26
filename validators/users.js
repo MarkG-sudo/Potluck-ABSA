@@ -49,17 +49,16 @@ export const registerUserValidator = Joi.object({
     'any.required': 'This field is required',
 });
 
-// ✅ REMOVE GOOGLE OAUTH VALIDATOR (NOT USED IN MVP)
+// ✅  GOOGLE OAUTH VALIDATOR (NOT USED IN MVP)
 // export const googleAuthValidator = Joi.object({ ... });
 
 export const updateUserValidator = Joi.object({
     firstName: Joi.string().min(2).max(50),
     lastName: Joi.string().min(2).max(50),
 
-    // ✅ PHONE REQUIRED FOR PROFILE UPDATES TOO
     phone: Joi.string()
         .pattern(/^0\d{9}$/)
-        .required()
+        .optional()
         .messages({
             "string.pattern.base": "Phone must be a valid 10-digit Ghana number starting with 0"
         }),
@@ -105,12 +104,12 @@ export const adminUpdateUserValidator = Joi.object({
     }).optional()
 });
 
-// ✅ NEW VALIDATOR FOR POTCHEF PROFILE COMPLETION
+
 export const completePotchefProfileValidator = Joi.object({
-    // ✅ PHONE REQUIRED (SAME AS REGISTRATION)
+
     phone: Joi.string()
         .pattern(/^0\d{9}$/)
-        .required()
+        .optional()
         .messages({
             "string.pattern.base": "Phone must be a valid 10-digit Ghana number starting with 0"
         }),
@@ -176,4 +175,56 @@ export const updatePayoutDetailsValidator = Joi.object({
         accountNumber: Joi.string().required(),
         accountName: Joi.string().required()
     }).required()
+});
+
+
+
+export const registerAdminValidator = Joi.object({
+    firstName: Joi.string().trim().min(2).max(50).required()
+        .messages({ 'string.min': 'First name must be at least 2 characters' }),
+
+    lastName: Joi.string().trim().min(2).max(50).required()
+        .messages({ 'string.min': 'Last name must be at least 2 characters' }),
+
+    email: Joi.string().trim().email({ tlds: { allow: false } }).required()
+        .messages({ 'string.email': 'Email must be a valid address' }),
+
+    phone: Joi.string()
+        .pattern(/^0\d{9}$/)
+        .required()
+        .messages({
+            "string.pattern.base": "Phone number must be a valid 10-digit Ghana number (e.g. 0559090182)",
+            "any.required": "Phone number is required"
+        }),
+
+    password: Joi.string()
+        .pattern(new RegExp("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}$"))
+        .required()
+        .messages({
+            'string.pattern.base': 'Password must be at least 8 characters, including uppercase, lowercase, and a number.',
+            'any.required': 'Password is required'
+        }),
+
+    role: Joi.string()
+        .valid('admin')
+        .required()
+        .messages({
+            'any.only': 'For admin creation only'
+        }),
+
+    // ✅ Explicitly forbiding fields not needed here
+    avatar: Joi.forbidden().messages({
+        'any.unknown': 'Avatar is not allowed during admin registration'
+    }),
+
+    source: Joi.forbidden().messages({
+        'any.unknown': 'Source is not allowed during admin registration'
+    }),
+
+    payoutDetails: Joi.forbidden().messages({
+        'any.unknown': 'payoutDetails should not be provided during admin registration'
+    })
+
+}).messages({
+    'any.required': 'This field is required',
 });

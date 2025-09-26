@@ -6,10 +6,9 @@ import { completePotchefProfile, getProfileCompletionStatus } from "../controlle
 
 const completeProfileRouter = Router();
 
-// ✅ POST /complete-profile (Potchef profile completion with temp token)
+
 completeProfileRouter.post("/complete-profile", allowTempAuth, completePotchefProfile);
 
-// ✅ GET /complete-profile/status (User checks their own completion status)
 completeProfileRouter.get("/complete-profile/status", isAuthenticated, getProfileCompletionStatus);
 
 

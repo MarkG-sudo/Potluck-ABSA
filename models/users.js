@@ -30,7 +30,7 @@ const userSchema = new Schema({
     // Roles & status
     role: {
         type: String,
-        enum: ['potchef', 'potlucky', 'admin'],
+        enum: ['potchef', 'potlucky', 'admin', 'superadmin'],
         required: true
     },
     status: {

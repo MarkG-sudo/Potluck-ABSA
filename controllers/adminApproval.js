@@ -63,7 +63,17 @@ export const approveUser = async (req, res, next) => {
 
             return res.json({
                 message: `✅ ${user.firstName}'s account approved.`,
-                user: { ...user.toObject(), password: undefined }
+                user: {
+                    id: user._id,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    email: user.email,
+                    role: user.role,
+                    status: user.status,
+                    profileCompleted: user.profileCompleted,
+                    approvedAt: user.approvedAt
+                    
+                }
             });
         } else {
             user.status = "rejected";
@@ -97,6 +107,8 @@ export const approveUser = async (req, res, next) => {
         next(err);
     }
 };
+
+
 // Get all pending users - ✅ Add profileCompleted info for admin dashboard
 export const getPendingUsers = async (req, res, next) => {
     try {

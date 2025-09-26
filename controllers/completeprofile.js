@@ -15,7 +15,6 @@ export const completePotchefProfile = async (req, res, next) => {
             return res.status(400).json({ error: "This endpoint is for potchef profile completion only" });
         }
 
-        // ✅ Prevent re-completion
         if (user.profileCompleted) {
             return res.status(400).json({
                 error: "Profile already completed. Use the update endpoint for changes."
@@ -29,14 +28,16 @@ export const completePotchefProfile = async (req, res, next) => {
 
         const { phone, payoutDetails } = value;
 
-        // ✅ Validate phone format
-        if (!/^0\d{9}$/.test(phone)) {
-            return res.status(422).json({
-                error: "Phone number must be a valid 10-digit Ghana number starting with 0"
-            });
+        // ✅ Only update phone if provided (otherwise keep existing one)
+        if (phone && phone.trim() !== '') {
+            // Validate phone format if provided
+            if (!/^0\d{9}$/.test(phone)) {
+                return res.status(422).json({
+                    error: "Phone number must be a valid 10-digit Ghana number starting with 0"
+                });
+            }
+            user.phone = phone;
         }
-
-        user.phone = phone;
 
         // ✅ Paystack integration
         let paystackSubaccount = null;
@@ -71,17 +72,21 @@ export const completePotchefProfile = async (req, res, next) => {
             percentageCharge: 15
         };
 
-        // ✅ CRITICAL FIX: Explicitly set profileCompleted to true
+        // ✅ Explicitly set profileCompleted to true
         user.profileCompleted = true;
 
         await user.save();
 
         res.json({
-            message: "Profile completed successfully",
-            profileCompleted: user.profileCompleted, // Will now be true
-            status: user.status, // "pending"
+            message: "Profile completed successfully.Your account is now pending approval",
+            profileCompleted: user.profileCompleted,
+            status: user.status,
             user: {
-                ...user.toObject(),
+                id: user._id,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                role: user.role,
                 password: undefined
             }
         });
@@ -223,7 +228,7 @@ export const getProfileCompletionStatus = async (req, res, next) => {
 //             }
 //         }
 
-//         // ✅ Handle password update  
+//         // ✅ Handle password update
 //         if (password) {
 //             user.password = await bcrypt.hash(password, 10);
 //             if (user.source === "google") {

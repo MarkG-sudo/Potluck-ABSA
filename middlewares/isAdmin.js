@@ -4,3 +4,11 @@ export const isAdmin = (req, res, next) => {
     }
     next();
 };
+
+
+export const isSuperAdmin = (req, res, next) => {
+    if (!req.auth || req.auth.role !== "superadmin") {
+        return res.status(403).json({ error: "Access denied. Super admins only." });
+    }
+    next();
+};

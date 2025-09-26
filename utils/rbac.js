@@ -99,6 +99,33 @@ export const permissions = [
         ]
     },
     {
+        role: 'superadmin',
+        actions: [
+            'get_profile',
+            'update_profile',
+            'create_user',
+            'view_all_meals',
+            'view_my_meals',
+            'update_meal_status',
+            'moderate_meal_status',
+            'delete_meal',
+            'ban_user',
+            'approve_users',
+            'view_pending_users',
+            'approve_potchef',
+            'approve_operator',
+            'manage_recipes',
+            'send_announcement',
+            'view_user_list',
+            'access_user_metrics',
+            'add_franchisee',
+            'update_franchisee',
+            'update_commission',
+            'delete_user',
+            'view_compliance_dashboard'
+        ]
+    },
+    {
         role: 'super_agent',
         actions: [
             'get_profile',
