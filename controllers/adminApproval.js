@@ -42,6 +42,7 @@ export const approveUser = async (req, res, next) => {
         if (action === "approve") {
             user.status = "approved";
             user.approvedAt = new Date();
+            user.approvedBy = req.auth?.id;
             await user.save();
 
             // ✅ Email sending (your code is perfect)
@@ -71,7 +72,8 @@ export const approveUser = async (req, res, next) => {
                     role: user.role,
                     status: user.status,
                     profileCompleted: user.profileCompleted,
-                    approvedAt: user.approvedAt
+                    approvedAt: user.approvedAt,
+                    approvedBy: user.approvedBy
                     
                 }
             });

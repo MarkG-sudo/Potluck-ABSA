@@ -1,5 +1,5 @@
 
-import { Schema, model } from "mongoose";
+import { Schema, SchemaType, model } from "mongoose";
 import { toJSON } from "@reis/mongoose-to-json";
 
 const userSchema = new Schema({
@@ -41,7 +41,16 @@ const userSchema = new Schema({
         }
     },
     approvedAt: { type: Date },
-
+    approvedBy: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        validate: {
+            validator: function (v) {
+                return this.status !== 'approved' || !!v;
+            },
+            message: "approvedBy is required when status is 'approved'"
+        }
+    },
     // Google OAuth
     // googleId: { type: String, sparse: true, index: true },
     // googleAccessToken: { type: String },
