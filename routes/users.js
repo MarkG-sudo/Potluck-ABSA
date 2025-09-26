@@ -3,7 +3,7 @@ import { registerUser, getAllUsers, signInUser, getMyProfile, getOneUser, update
 import { hasPermission, isAuthenticated } from '../middlewares/auth.js';
 // import { loginRateLimiter } from "../middlewares/rateLimiter.js";
 import { upload } from "../middlewares/cloudinary.js";
-import { isAdmin, isSuperAdmin } from "../middlewares/isAdmin.js";
+import { isSuperAdmin, isAdminOrSuperAdmin } from "../middlewares/isAdmin.js";
 import { refreshToken } from '../controllers/users.js';
 
 
@@ -24,8 +24,8 @@ userRouter.get("/users/me", isAuthenticated, hasPermission('get_profile'), getMy
 userRouter.patch("/users/avatar", isAuthenticated,  upload.single("avatar"), updateAvatar);
 
 // Admin-only (expand with role middleware later)
-userRouter.get("/admin/users", isAuthenticated, isAdmin, getAllUsers);
-userRouter.delete("/admin/delete/:id", isAuthenticated, isAdmin,  deleteUser);
+userRouter.get("/admin/users", isAuthenticated, isAdminOrSuperAdmin, getAllUsers);
+userRouter.delete("/admin/delete/:id", isAuthenticated, isAdminOrSuperAdmin,  deleteUser);
 
 userRouter.get("/users/:id", isAuthenticated, getOneUser);
 userRouter.post("/users/refresh-token", refreshToken);
