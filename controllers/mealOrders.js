@@ -3,8 +3,7 @@ import { MealModel } from "../models/meals.js";
 import { MealOrder } from "../models/mealOrder.js";
 import { sendUserNotification } from "../utils/push.js";
 import { NotificationModel } from "../models/notifications.js";
-import { updateOrderValidator } from "../validators/mealOrder.js";
-import { createOrderValidator } from "../validators/mealOrder.js";
+import { createOrderValidator, updateOrderValidator, orderQueryValidator  } from "../validators/mealOrder.js";
 import crypto from "crypto";
 
 // 🔑 Helper: generate unique Paystack reference
