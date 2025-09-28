@@ -10,7 +10,7 @@ import { refreshToken } from '../controllers/users.js';
 const userRouter = express.Router();
 
 // Public
-userRouter.post("/users/register",  registerUser);
+userRouter.post("/users/register",  upload.single("avatar"), registerUser);
 
 userRouter.post("/users/signIn",  signInUser);
 
