@@ -15,6 +15,7 @@ import bankRouter from "./utils/bank acc.js";
 import completeProfileRouter from "./routes/completeProfile.js";
 import paystackRouter from "./routes/paystack.js";
 import commissionChangeRouter from "./routes/commissionChange.js";
+import reportRouter from "./controllers/report.js";
 import dotenv from "dotenv";
 
 
@@ -56,6 +57,7 @@ app.use(notificationRouter);
 app.use(bankRouter);
 app.use(completeProfileRouter);
 app.use(commissionChangeRouter);
+app.use(reportRouter);
 app.use("/api/payments", paystackRouter);
 
 // Health check endpoint

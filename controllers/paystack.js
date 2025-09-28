@@ -17,7 +17,7 @@ export const paystackWebhook = async (req, res, next) => {
         if (hash !== signature) {
             console.error("❌ Invalid webhook signature! Potential fraud.");
             await NotificationModel.create({
-                user: null,
+                scope: 'admin', 
                 title: "⚠ Security Alert",
                 body: "Potential fraudulent webhook signature detected in Paystack webhook.",
                 url: "/admin/security",
@@ -69,7 +69,7 @@ export const paystackWebhook = async (req, res, next) => {
             const ps = event.data;
             const order = await MealOrder.findOne({ "payment.reference": reference })
                 .populate("buyer", "firstName lastName email")
-                .populate("chef", "email") // Only need chef email for notification
+                .populate("chef", "email") 
                 .populate("meal", "mealName price");
 
             if (order && order.payment.status === "pending") {
@@ -85,7 +85,7 @@ export const paystackWebhook = async (req, res, next) => {
         // 🔹 Handle transfer success
         else if (event.event === "transfer.success") {
             await NotificationModel.create({
-                user: null,
+                scope: 'admin', 
                 title: "✅ Transfer Successful",
                 body: `Transfer ${event.data.reference} to chef completed. Amount: GHS ${(event.data.amount / 100).toFixed(2)}`,
                 url: "/admin/transfers",
@@ -96,7 +96,7 @@ export const paystackWebhook = async (req, res, next) => {
         // 🔹 Handle transfer failure
         else if (event.event === "transfer.failed") {
             await NotificationModel.create({
-                user: null,
+                scope: 'admin', // ✅ FIXED: Use scope instead of user: null
                 title: "❌ Transfer Failed",
                 body: `Transfer ${event.data.reference} failed. Reason: ${event.data.reason || "Unknown"}`,
                 url: "/admin/transfers",
@@ -114,7 +114,7 @@ export const paystackWebhook = async (req, res, next) => {
     } catch (err) {
         console.error("Webhook processing error:", err.message);
         await NotificationModel.create({
-            user: null,
+            scope: 'system', // ✅ FIXED: Use scope instead of user: null
             title: "⚠ Webhook Processing Error",
             body: `Error processing Paystack webhook: ${err.message}`,
             url: "/admin/system",
@@ -174,7 +174,7 @@ const sendPaymentSuccessNotifications = async (order) => {
         try {
             await sendUserNotification(order.chef._id, {
                 title: "💰 New Paid Order",
-                body: `New order for ${order.meal.mealName} has been paid. Amount: GHS ${order.totalPrice}`,
+                body: `New order for ${order.meal.mealName} has been paid. You received: GHS ${order.vendorEarnings}`,
                 url: `/dashboard/orders/${order._id}`,
             });
             console.log(`✅ Push notification sent to chef`);
@@ -192,6 +192,25 @@ const sendPaymentSuccessNotifications = async (order) => {
         } catch (pushError) {
             console.warn(`⚠️ Push notification to buyer failed:`, pushError.message);
         }
+
+        // ✅ DATABASE NOTIFICATIONS FOR IN-APP DISPLAY
+        // Chef notification
+        await NotificationModel.create({
+            user: order.chef._id, 
+            title: "💰 New Paid Order",
+            body: `New order for ${order.meal.mealName} has been paid. Amount: GHS ${order.vendorEarnings}`,
+            url: `/dashboard/orders/${order._id}`,
+            type: "order",
+        });
+
+        // Buyer notification  
+        await NotificationModel.create({
+            user: order.buyer._id, 
+            title: "✅ Payment Confirmed",
+            body: `Your payment for ${order.meal.mealName} was successful. Order #${shortId}`,
+            url: `/dashboard/my-orders/${order._id}`,
+            type: "order",
+        });
 
         // 📧 Email to Buyer
         if (isValidEmail(order.buyer.email)) {
@@ -257,51 +276,50 @@ const sendPaymentSuccessNotifications = async (order) => {
                 console.log(`✅ Chef email sent successfully`);
             } catch (emailError) {
                 console.error(`❌ Chef email failed:`, emailError.message);
-                // ✅ Notify admin of email failure - FIXED format
+                // ✅ Notify admin of email failure
                 await NotificationModel.create({
-                    scope: 'system', // ✅ Added scope
+                    scope: 'system',
                     title: "⚠ Chef Email Failed",
                     body: `Failed to send notification email to chef ${order.chef.email} for order ${shortId}`,
                     url: `/admin/orders/${order._id}`,
-                    type: "system", // ✅ Matches enum
+                    type: "system",
                 });
             }
         } else {
             console.warn(`⚠️ Invalid chef email: ${order.chef.email}`);
-            // ✅ Invalid email notification - FIXED format
+            // ✅ Invalid email notification
             await NotificationModel.create({
-                scope: 'system', // ✅ Added scope
+                scope: 'system',
                 title: "⚠ Invalid Chef Email",
                 body: `Chef ${order.chef.firstName} has invalid email: ${order.chef.email}`,
                 url: `/admin/users/${order.chef._id}`,
-                type: "system", // ✅ Matches enum
+                type: "system",
             });
         }
 
-        // ✅ Admin record - FIXED format
+        // ✅ Admin record
         await NotificationModel.create({
-            scope: 'admin', // ✅ Added scope (removed user: null)
+            scope: 'admin',
             title: "💰 New Payment Received",
             body: `Order #${shortId} paid successfully. Amount: GHS ${order.totalPrice}`,
             url: `/admin/orders/${order._id}`,
-            type: "payment", // ✅ Matches enum
+            type: "payment",
         });
 
         console.log(`✅ All notifications processed for order ${shortId}`);
 
     } catch (error) {
         console.error("❌ Notification sending failed completely:", error?.message || error);
-        // ✅ Critical failure - FIXED format
+        // ✅ Critical failure
         await NotificationModel.create({
-            scope: 'system', // ✅ Added scope
+            scope: 'system',
             title: "🚨 Notification System Failure",
             body: `Complete failure in sending notifications for order ${order._id}: ${error.message}`,
             url: "/admin/system",
-            type: "system", // ✅ Matches enum
+            type: "system",
         });
     }
 };
-
 
 const sendPaymentFailedNotifications = async (order, ps) => {
     try {
@@ -314,9 +332,18 @@ const sendPaymentFailedNotifications = async (order, ps) => {
             url: `/dashboard/my-orders/${order._id}`,
         });
 
-        // 📧 Email to buyer - FIXED SendGrid format
+        // ✅ DATABASE NOTIFICATION FOR BUYER
+        await NotificationModel.create({
+            user: order.buyer._id, // ✅ TARGET BUYER SPECIFICALLY
+            title: "❌ Payment Failed",
+            body: `Payment for order ${shortId} failed. Please try again.`,
+            url: `/dashboard/my-orders/${order._id}`,
+            type: "order",
+        });
+
+        // 📧 Email to buyer
         await sendEmail({
-            from: {  
+            from: {
                 name: process.env.SMTP_FROM_NAME,
                 email: process.env.SMTP_FROM_EMAIL
             },
@@ -330,33 +357,32 @@ const sendPaymentFailedNotifications = async (order, ps) => {
             `,
         });
 
-        // ✅ Admin record - FIXED NotificationModel format
+        // ✅ Admin record
         await NotificationModel.create({
-            scope: 'admin', // ✅ Required scope field
+            scope: 'admin',
             title: "❌ Payment Failed",
             body: `Payment failed for Order #${shortId}. Reason: ${ps.gateway_response || "Unknown"}`,
             url: `/admin/orders/${order._id}`,
-            type: "payment", // ✅ Matches your updated enum
+            type: "payment",
         });
 
     } catch (error) {
         console.warn("Failed payment notification error:", error?.message || error);
 
-        // ✅ System notification for failure - FIXED format
+        // ✅ System notification for failure
         await NotificationModel.create({
-            scope: 'system', // ✅ Required scope field
+            scope: 'system',
             title: "⚠ Payment Failure Notification Error",
             body: `Error sending failed payment notifications for order ${shortId}: ${error.message}`,
             url: `/admin/orders/${order._id}`,
-            type: "system", // ✅ Matches your enum
+            type: "system",
         });
     }
 };
 
-
 const handlePaymentMismatch = async (order, ps, reference) => {
     await NotificationModel.create({
-        user: null,
+        scope: 'admin', // ✅ FIXED: Use scope instead of user: null
         title: "⚠ Payment Mismatch",
         body: `Reference ${reference} attempted with mismatched amount. Expected ${order.totalPrice} GHS, got ${ps.amount / 100} GHS`,
         url: `/admin/orders/${order._id}`,
@@ -367,7 +393,7 @@ const handlePaymentMismatch = async (order, ps, reference) => {
 
 const handleEmailMismatch = async (order, ps, reference) => {
     await NotificationModel.create({
-        user: null,
+        scope: 'admin', // ✅ FIXED: Use scope instead of user: null
         title: "⚠ Payment Email Mismatch",
         body: `Reference ${reference} email mismatch. Paystack: ${ps.customer.email}, Expected: ${order.buyer.email}`,
         url: `/admin/orders/${order._id}`,
