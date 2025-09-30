@@ -117,8 +117,7 @@ const mealSchema = new Schema({
     // Food safety and compliance
     preparationFacility: {
         type: String,
-        enum: ['Home Kitchen', 'Commercial Kitchen', 'Cloud Kitchen'],
-        required: true,
+        enum: ['Home Kitchen', 'Commercial Kitchen'],
         default: 'Home Kitchen'
     },
     foodSafetyCertified: { type: Boolean, default: false },
