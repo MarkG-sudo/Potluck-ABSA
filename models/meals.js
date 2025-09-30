@@ -18,7 +18,7 @@ const mealSchema = new Schema({
     servings: { type: Number, required: true, min: 1 },
 
     // Inventory management
-    initialServings: { type: Number, required: true, min: 1 },
+    initialServings: { type: Number,  min: 1 },
     availableServings: { type: Number, min: 0 },
     soldCount: { type: Number, default: 0 },
     isSoldOut: {

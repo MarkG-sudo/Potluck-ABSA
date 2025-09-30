@@ -7,7 +7,7 @@ export const addMealValidator = Joi.object({
     servings: Joi.number().integer().min(1).required().label("Servings"),
 
     // Inventory management - new
-    initialServings: Joi.number().integer().min(1).required().label("Initial Servings"),
+    initialServings: Joi.number().integer().min(1).label("Initial Servings"),
     availableServings: Joi.number().integer().min(0).default(Joi.ref('initialServings')),
 
     category: Joi.string().trim().required().label("Category"),
