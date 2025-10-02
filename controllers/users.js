@@ -1,5 +1,5 @@
 import { UserModel } from "../models/users.js";
-import { registerUserValidator, loginUserValidator, updateUserValidator, registerAdminValidator } from "../validators/users.js";
+import { registerUserValidator, loginUserValidator, updateUserValidator, registerAdminValidator, forgotPasswordValidator , resetPasswordValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendEmail } from "../utils/mail.js";
@@ -145,16 +145,10 @@ export const signInUser = async (req, res, next) => {
 
         const user = await UserModel.findOne({ email: value.email });
         if (!user) {
-            return res.status(404).json({ error: "Account does not exist!" });
+            return res.status(404).json({ error: "Account does not exist! Email Not found" });
         }
 
-        // ✅ Handle Google auth users trying to use password login
-        if (user.source === "google") {
-            return res.status(403).json({
-                error: "This account was created via Google Sign-In. Please use Google login or set a password via profile completion."
-            });
-        }
-
+        
         // ✅ Validate password for local users
         if (!user.password) {
             return res.status(401).json({ error: "Invalid credentials!" });
@@ -162,7 +156,7 @@ export const signInUser = async (req, res, next) => {
 
         const isPasswordCorrect = await bcrypt.compare(value.password, user.password);
         if (!isPasswordCorrect) {
-            return res.status(401).json({ error: "Invalid credentials!" });
+            return res.status(401).json({ error: "Invalid credentials!. Password is incorrect" });
         }
 
         // ✅ Check approval status using new status field
@@ -519,6 +513,87 @@ export const registerAdminBySuperAdmin = async (req, res) => {
         });
     }
 };
+
+
+export const forgotPassword = async (req, res) => {
+    try {
+        const { error, value } = forgotPasswordValidator.validate(req.body);
+        if (error) {
+            return res.status(422).json({ error: error.details.map(d => d.message) });
+        }
+
+        const user = await UserModel.findOne({ email: value.email.toLowerCase().trim() });
+        if (!user) {
+            return res.status(404).json({ error: "No account found with that email" });
+        }
+
+        const resetToken = jwt.sign(
+            { id: user._id, type: 'password_reset' },
+            process.env.JWT_PRIVATE_KEY,
+            { expiresIn: '30m' }
+        );
+
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+        const templatePath = path.join(__dirname, "../utils/reset-password-mail.html");
+        if (fs.existsSync(templatePath)) {
+            let emailHTML = fs.readFileSync(templatePath, "utf-8");
+            emailHTML = emailHTML
+                .replace(/{{firstName}}/g, user.firstName || "")
+                .replace(/{{resetLink}}/g, resetLink);
+
+            await sendEmail({
+                from: {
+                    name: process.env.SMTP_FROM_NAME,
+                    email: process.env.SMTP_FROM_EMAIL
+                },
+                to: user.email,
+                subject: "Reset Your Potluck Password",
+                html: emailHTML
+            });
+        }
+
+        res.json({ message: "Password reset link sent to your email" });
+    } catch (err) {
+        console.error("Forgot password error:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+
+export const resetPassword = async (req, res) => {
+    try {
+        const { error, value } = resetPasswordValidator.validate(req.body);
+        if (error) {
+            return res.status(422).json({ error: error.details.map(d => d.message) });
+        }
+
+        let payload;
+        try {
+            payload = jwt.verify(value.token, process.env.JWT_PRIVATE_KEY);
+        } catch (err) {
+            return res.status(401).json({ error: "Invalid or expired token" });
+        }
+
+        if (payload.type !== 'password_reset') {
+            return res.status(403).json({ error: "Invalid token type" });
+        }
+
+        const user = await UserModel.findById(payload.id);
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        user.password = await bcrypt.hash(value.newPassword, 10);
+        await user.save();
+
+        res.json({ message: "Password reset successful" });
+    } catch (err) {
+        console.error("Reset password error:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
 
 
 

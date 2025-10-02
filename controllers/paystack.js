@@ -1,21 +1,33 @@
 import crypto from "crypto";
-import { initiatePayment, verifyPayment } from "../utils/paystack.js";
+import { initiatePayment, verifyPayment, submitOtp } from "../utils/paystack.js";
 import { MealOrder } from "../models/mealOrder.js";
 import { UserModel } from "../models/users.js";
 import { NotificationModel } from "../models/notifications.js";
 import { sendEmail } from "../utils/mail.js";
 import { sendUserNotification } from "../utils/push.js";
+import { WebhookLogModel } from "../models/webhookLog.js";
+
+
 
 export const paystackWebhook = async (req, res, next) => {
     try {
         const rawBody = req.rawBody || JSON.stringify(req.body);
         const signature = req.headers["x-paystack-signature"];
 
-        // ✅ 1. Validate webhook signature first
+        // ✅ 1. Validate webhook signature
         const secret = process.env.PAYSTACK_SECRET_KEY;
         const hash = crypto.createHmac("sha512", secret).update(rawBody).digest("hex");
         if (hash !== signature) {
             console.error("❌ Invalid webhook signature! Potential fraud.");
+
+            await WebhookLogModel.create({
+                event: "invalid_signature",
+                reference: null,
+                payload: req.body,
+                verified: false,
+                notes: "Signature mismatch detected"
+            });
+
             await NotificationModel.create({
                 scope: 'admin',
                 title: "⚠ Security Alert",
@@ -27,19 +39,32 @@ export const paystackWebhook = async (req, res, next) => {
             return res.sendStatus(400);
         }
 
-        // ✅ 2. Parse event BEFORE sending response
+        // ✅ 2. Parse event BEFORE responding
         const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
 
-        // ✅ 3. IMMEDIATELY acknowledge receipt to Paystack :cite[1]
+        // ✅ 3. Acknowledge receipt immediately
         res.sendStatus(200);
 
-        // ✅ 4. Process event asynchronously after sending response
+        // ✅ 4. Log verified webhook event
+        await WebhookLogModel.create({
+            event: event.event,
+            reference: event.data?.reference,
+            payload: event,
+            verified: true,
+            notes: `Webhook received and verified for ${event.event}`
+        });
+
+
+        // ✅ 5. Process event asynchronously
         const reference = event.data?.reference;
         console.log(`🔔 Webhook received: ${event.event} for reference: ${reference}`);
 
-        // 🔹 Handle successful payment
-        if (event.event === "charge.success" && event.data.status === "success") {
-            const ps = event.data;
+        if (!reference) return;
+
+        const ps = event.data;
+
+        // 🔹 Handle successful charge
+        if (event.event === "charge.success" && ps.status === "success") {
             const order = await MealOrder.findOne({ "payment.reference": reference })
                 .populate("buyer", "firstName lastName email")
                 .populate("chef", "firstName lastName email paystack")
@@ -51,38 +76,64 @@ export const paystackWebhook = async (req, res, next) => {
                 if (ps.amount !== expectedAmount) {
                     console.error(`⚠ Payment amount mismatch for order ${order._id}`);
                     await handlePaymentMismatch(order, ps, reference);
-                    return; // No res.sendStatus() here since we already responded
+                    return;
                 }
 
                 if (ps.customer.email !== order.buyer.email) {
                     console.error(`⚠ Email mismatch for order ${order._id}`);
                     await handleEmailMismatch(order, ps, reference);
-                    return; // No res.sendStatus() here since we already responded
+                    return;
+                }
+
+                // 🕒 Vodafone voucher expiry check
+                if (
+                    order.payment.authorizationType === "voucher" &&
+                    order.payment.expiresAt &&
+                    new Date() > order.payment.expiresAt
+                ) {
+                    console.warn(`⚠ Voucher expired before webhook arrived for ${reference}`);
+                    order.payment.status = "expired";
+                    order.payment.failureReason = "Voucher not submitted in time";
+                    await order.save();
+                    return;
                 }
 
                 // ✅ Update order to PAID
-                await updateOrderToPaid(order, ps);
-                console.log(`✅ Order ${order._id} marked as PAID via webhook.`);
+                order.payment.status = "paid";
+                order.payment.transactionId = ps.id;
+                order.payment.channel = ps.channel;
+                order.payment.gatewayResponse = ps.gateway_response;
+                order.payment.authorization = ps.authorization || null;
+                order.payment.paidAt = new Date(ps.paid_at || Date.now());
+                order.payment.failureReason = null;
 
-                // ✅ Notify chef and buyer
+                await order.save();
+                console.log(`✅ Order ${order._id} marked as PAID via webhook.`);
+                console.log(`🔍 Channel: ${ps.channel}`);
+                console.log(`🔍 Authorization Type: ${order.payment.authorizationType}`);
+
                 await sendPaymentSuccessNotifications(order);
             }
         }
 
-        // 🔹 Handle FAILED payment
-        else if (event.event === "charge.failed" || (event.event === "charge.success" && event.data.status !== "success")) {
-            const ps = event.data;
+        // 🔹 Handle failed charge
+        else if (
+            event.event === "charge.failed" ||
+            (event.event === "charge.success" && ps.status !== "success")
+        ) {
             const order = await MealOrder.findOne({ "payment.reference": reference })
                 .populate("buyer", "firstName lastName email")
                 .populate("chef", "email")
                 .populate("meal", "mealName price");
 
             if (order && order.payment.status === "pending") {
-                // ✅ Update order to FAILED
-                await updateOrderToFailed(order, ps);
+                order.payment.status = "failed";
+                order.payment.failureReason = ps.gateway_response || "Payment failed";
+                order.payment.failedAt = new Date();
+
+                await order.save();
                 console.log(`❌ Order ${order._id} marked as FAILED via webhook.`);
 
-                // ✅ Notify buyer about failed payment
                 await sendPaymentFailedNotifications(order, ps);
             }
         }
@@ -92,7 +143,7 @@ export const paystackWebhook = async (req, res, next) => {
             await NotificationModel.create({
                 scope: 'admin',
                 title: "✅ Transfer Successful",
-                body: `Transfer ${event.data.reference} to chef completed. Amount: GHS ${(event.data.amount / 100).toFixed(2)}`,
+                body: `Transfer ${ps.reference} to chef completed. Amount: GHS ${(ps.amount / 100).toFixed(2)}`,
                 url: "/admin/transfers",
                 type: "transfer",
             });
@@ -103,7 +154,7 @@ export const paystackWebhook = async (req, res, next) => {
             await NotificationModel.create({
                 scope: 'admin',
                 title: "❌ Transfer Failed",
-                body: `Transfer ${event.data.reference} failed. Reason: ${event.data.reason || "Unknown"}`,
+                body: `Transfer ${ps.reference} failed. Reason: ${ps.reason || "Unknown"}`,
                 url: "/admin/transfers",
                 type: "transfer",
                 priority: "high",
@@ -125,7 +176,6 @@ export const paystackWebhook = async (req, res, next) => {
             type: "system",
             priority: "high",
         });
-        // Note: Cannot send status here since we already sent 200
     }
 };
 
@@ -134,7 +184,6 @@ export const paystackWebhook = async (req, res, next) => {
 // =======================
 
 const updateOrderToPaid = async (order, ps) => {
-    // ✅ Idempotency check: Stop if order is already paid
     if (order.payment.status === "paid") {
         console.log(`Order ${order._id} is already paid. Skipping update.`);
         return;
@@ -144,27 +193,35 @@ const updateOrderToPaid = async (order, ps) => {
     order.payment.reference = ps.reference;
     order.payment.transactionId = ps.id;
     order.payment.channel = ps.channel;
+    order.payment.gatewayResponse = ps.gateway_response;
+    order.payment.authorization = ps.authorization || null;
     order.payment.failureReason = null;
-    order.paidAt = new Date(ps.paid_at || Date.now());
+    order.payment.paidAt = new Date(ps.paid_at || Date.now());
 
     const commission = order.totalPrice * 0.15;
     order.commission = commission;
     order.vendorEarnings = order.totalPrice - commission;
 
     await order.save();
+
+    console.log(`✅ Order ${order._id} marked as PAID`);
+    console.log(`🔍 Channel: ${order.payment.channel}`);
+    console.log(`🔍 Authorization Type: ${order.payment.authorizationType}`);
 };
 
 const updateOrderToFailed = async (order, ps) => {
-    // ✅ Idempotency check: Only update if the order is still pending
     if (order.payment.status !== "pending") {
         console.log(`Order ${order._id} status is already ${order.payment.status}. Skipping failure update.`);
         return;
     }
 
     order.payment.status = "failed";
+    order.payment.reference = ps.reference || order.payment.reference;
     order.payment.failureReason = ps.gateway_response || "Payment failed";
     order.payment.failedAt = new Date();
+
     await order.save();
+    console.log(`❌ Order ${order._id} marked as FAILED`);
 };
 
 const sendPaymentSuccessNotifications = async (order) => {
@@ -433,62 +490,36 @@ export const createPaymentController = async (req, res, next) => {
         // ✅ Fetch user and order
         const user = await UserModel.findById(req.auth.id).select("email firstName lastName");
         if (!user) {
-            console.log(`❌ User not found for ID: ${req.auth.id}`);
             return res.status(404).json({ message: "User not found" });
         }
 
-        console.log(`✅ User found: ${user.email}`);
-
         const mealOrder = await MealOrder.findById(orderId)
             .populate("buyer", "email")
-            .populate("chef", "email paystack firstName lastName payoutDetails") // Added payoutDetails for validation
+            .populate("chef", "email paystack firstName lastName payoutDetails")
             .populate("meal", "mealName price");
 
         if (!mealOrder) {
-            console.log(`❌ Order not found for ID: ${orderId}`);
             return res.status(404).json({ message: "Order not found" });
         }
-
-        console.log(`✅ Order found for meal: ${mealOrder.meal.mealName}`);
-        console.log(`   Total Price: GHS ${mealOrder.totalPrice}`);
-        console.log(`   Chef: ${mealOrder.chef.firstName} ${mealOrder.chef.lastName}`);
 
         // ✅ Validate chef's payment setup
         const subaccountCode = mealOrder.chef.paystack?.subaccountCode;
         const payoutDetails = mealOrder.chef.payoutDetails;
 
-        console.log(`🔍 Checking chef payment setup:`);
-        console.log(`   Subaccount Code: ${subaccountCode || "MISSING"}`);
-        console.log(`   Payout Bank: ${payoutDetails?.bank?.bankCode || "MISSING"}`);
-        console.log(`   Account Number: ${payoutDetails?.bank?.accountNumber ? "***" + payoutDetails.bank.accountNumber.slice(-4) : "MISSING"}`);
-
-        if (!subaccountCode) {
-            console.log(`❌ Chef payment account not properly configured - missing subaccount`);
+        if (!subaccountCode || !payoutDetails?.bank?.bankCode || !payoutDetails?.bank?.accountNumber) {
             return res.status(400).json({
-                message: "Chef payment account not properly configured. Please contact support."
-            });
-        }
-
-        if (!payoutDetails?.bank?.bankCode || !payoutDetails?.bank?.accountNumber) {
-            console.log(`❌ Chef payout details incomplete`);
-            return res.status(400).json({
-                message: "Chef payout details incomplete. Please contact support."
+                message: "Chef payout setup is incomplete. Please contact support."
             });
         }
 
         // ✅ Validate momo data if method is momo
-        if (method === "momo") {
-            if (!momo?.phone || !momo?.provider) {
-                console.log(`❌ Mobile money payment requires phone number and provider`);
-                return res.status(400).json({
-                    message: "Mobile money payment requires phone number and provider"
-                });
-            }
+        if (method === "momo" && (!momo?.phone || !momo?.provider)) {
+            return res.status(400).json({
+                message: "Mobile money payment requires phone number and provider"
+            });
         }
 
-        console.log(`✅ All validations passed. Initiating payment with subaccount...`);
-
-        // ✅ Initiate payment with subaccount
+        // ✅ Initiate payment
         const paymentResponse = await initiatePayment({
             amount: mealOrder.totalPrice,
             email: user.email,
@@ -501,48 +532,98 @@ export const createPaymentController = async (req, res, next) => {
                 mealName: mealOrder.meal.mealName,
                 chefId: mealOrder.chef._id.toString(),
             },
-            subaccount: subaccountCode, // ✅ Pass the subaccount code
-            bearer: "subaccount" // ✅ Ensure subaccount bears transaction charges
+            subaccount: subaccountCode,
+            bearer: "subaccount"
         });
 
-        // ✅ Handle the payment response
-        console.log("✅ Paystack initiate response received");
-        console.log(`   Reference: ${paymentResponse?.data?.reference}`);
-        console.log(`   Authorization URL: ${paymentResponse?.data?.authorization_url ? "Present" : "Missing"}`);
+        const reference = paymentResponse?.data?.reference;
+        const authorizationUrl = paymentResponse?.data?.authorization_url;
+        const paymentStatus = paymentResponse?.data?.status;
+        const displayText = paymentResponse?.data?.display_text;
+        const displayTextType = paymentResponse?.data?.display_text_type || "ussd";
+        const channel = paymentResponse?.data?.channel || (method === "momo" ? "mobile_money" : "card");
 
-        if (!paymentResponse?.data?.reference) {
-            console.log(`❌ Payment initiation failed - no reference received`);
+        if (!reference) {
             return res.status(500).json({ message: "Payment initiation failed - no reference received" });
         }
 
-        const reference = paymentResponse.data.reference;
-        const authorizationUrl = paymentResponse.data.authorization_url;
+        // ✅ Save payment info to order
+        mealOrder.payment = {
+            method,
+            status: "pending",
+            reference,
+            subaccountUsed: subaccountCode,
+            expiresAt: new Date(Date.now() + 3 * 60 * 1000),
+            channel,
+        };
 
-        // ✅ Save payment reference in order
-        mealOrder.payment = mealOrder.payment || {};
-        mealOrder.payment.method = method;
-        mealOrder.payment.status = "pending";
-        mealOrder.payment.reference = reference;
-        mealOrder.payment.subaccountUsed = subaccountCode; // Track which subaccount was used
+        if (method === "momo") {
+            mealOrder.payment.momoProvider = momo.provider;
+            mealOrder.payment.displayText = displayText;
+            mealOrder.payment.displayTextType = displayTextType;
+
+            if (paymentStatus === "pay_offline") {
+                mealOrder.payment.authorizationType = "offline";
+            } else if (paymentStatus === "send_otp") {
+                mealOrder.payment.authorizationType = "voucher";
+            } else {
+                mealOrder.payment.authorizationType = "online";
+            }
+        }
+
         await mealOrder.save();
 
-        console.log(`✅ Payment reference saved in order`);
-        console.log(`   Reference: ${reference}`);
-        console.log(`   Status: ${mealOrder.payment.status}`);
-        console.log(`   Subaccount: ${subaccountCode}`);
-
-        // ✅ Send response back to client
-        res.status(200).json({
+        // ✅ Build response
+        const responseData = {
             message: "Payment initiated successfully",
             order: mealOrder,
             paymentReference: reference,
-            authorizationUrl: authorizationUrl,
-            subaccountUsed: subaccountCode, // Optional: for client confirmation
-        });
+            authorizationUrl,
+            displayText,
+            displayTextType,
+            channel,
+            subaccountUsed: subaccountCode,
+            expiresAt: mealOrder.payment.expiresAt,
+            authorizationType: mealOrder.payment.authorizationType,
+        };
+
+        if (method === "momo") {
+            if (paymentStatus === "pay_offline") {
+                responseData.message = "Payment initiated - authorize on your mobile device";
+            } else if (paymentStatus === "send_otp") {
+                responseData.message = "Dial the USSD code and enter the voucher";
+            }
+        }
+
+        res.status(200).json(responseData);
 
     } catch (err) {
         console.error("❌ Error in createPaymentController:", err);
-        next(err);
+        res.status(err.status || 500).json({ message: err.message, details: err.details });
+    }
+};
+
+
+
+// =======================
+// Submit otp
+// =======================
+
+
+
+export const submitOtpController = async (req, res) => {
+    const { reference, voucherCode } = req.body;
+
+    if (!reference || !voucherCode) {
+        return res.status(400).json({ error: "Reference and voucher code are required" });
+    }
+
+    try {
+        const result = await submitOtp(reference, voucherCode);
+        return res.status(200).json(result);
+    } catch (err) {
+        console.error("OTP submission failed:", err.message);
+        return res.status(500).json({ error: "OTP submission failed" });
     }
 };
 
@@ -554,96 +635,127 @@ export const createPaymentController = async (req, res, next) => {
 // =======================
 
 export const verifyPaymentController = async (req, res, next) => {
-    try {
-        const { paymentReference } = req.params;
-        if (!paymentReference) return res.status(400).json({ message: "paymentReference is required" });
-
-        console.log("🔹 Verifying payment for reference:", paymentReference);
-
-        const order = await MealOrder.findOne({ "payment.reference": paymentReference })
-            .populate("buyer", "email firstName lastName")
-            .populate("chef", "email paystack firstName lastName")
-            .populate("meal", "mealName price");
-
-        if (!order) return res.status(404).json({ message: "Order not found for this reference" });
-
-        console.log("🔹 Order fetched for verification:", order);
-
-        // ✅ Verify payment with Paystack
-        const verified = await verifyPayment(paymentReference);
-        console.log("🔹 Paystack verification response:", verified);
-
-        // ✅ Handle PAYMENT SUCCESS
-        if (verified?.status && verified.data.status === "success") {
-            // ✅ Amount validation
-            const expectedAmount = Math.round(order.totalPrice * 100);
-            const receivedAmount = verified.data.amount;
-
-            if (receivedAmount !== expectedAmount) {
-                return res.status(400).json({
-                    message: `Payment amount mismatch. Expected: GHS ${expectedAmount / 100} Received: GHS ${receivedAmount / 100}`,
-                });
-            }
-
-            // ✅ Update order to PAID
-            order.payment.status = "paid";
-            order.payment.transactionId = verified.data.id;
-            order.payment.channel = verified.data.channel;
-            order.payment.failureReason = null; // Clear any previous failure
-            order.paidAt = new Date(verified.data.paid_at || Date.now());
-            await order.save();
-
-            console.log("✅ Order updated after successful payment:", order);
-
-            // ✅ Send notifications (optional - same as webhook)
-            await sendPaymentSuccessNotifications(order);
-
-            return res.status(200).json({
-                message: "Payment verified successfully",
-                order,
-                payment: order.payment,
-            });
-        }
-
-        // ✅ Handle PAYMENT FAILED
-        else if (verified?.data?.status === "failed" || verified?.data?.status === "abandoned") {
-            // ✅ Update order to FAILED
-            order.payment.status = "failed";
-            order.payment.failureReason = verified.data.gateway_response || "Payment failed";
-            order.payment.failedAt = new Date();
-            await order.save();
-
-            console.log("❌ Order marked as failed:", order);
-
-            // ✅ Send failure notifications (optional)
-            await sendPaymentFailedNotifications(order, verified.data);
-
-            return res.status(400).json({
-                message: "Payment verification failed",
-                failureReason: verified.data.gateway_response,
-                data: verified.data,
-            });
-        }
-
-        // ✅ Handle STILL PENDING payments
-        else {
-            return res.status(200).json({
-                message: "Payment still processing",
-                status: verified.data.status,
-                order: {
-                    ...order.toObject(),
-                    payment: {
-                        ...order.payment,
-                        status: "pending" // Keep as pending
-                    }
-                }
-            });
-        }
-
-    } catch (err) {
-        console.error("❌ Error in verifyPaymentController:", err);
-        next(err);
+  try {
+    const { paymentReference } = req.params;
+    if (!paymentReference) {
+      return res.status(400).json({ message: "paymentReference is required" });
     }
+
+    console.log("🔹 Verifying payment for reference:", paymentReference);
+
+    const order = await MealOrder.findOne({ "payment.reference": paymentReference })
+      .populate("buyer", "email firstName lastName")
+      .populate("chef", "email paystack firstName lastName")
+      .populate("meal", "mealName price");
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found for this reference" });
+    }
+
+    // ✅ Expiry check
+    if (order.payment?.expiresAt && new Date() > order.payment.expiresAt) {
+      order.payment.status = "expired";
+      order.payment.failureReason = "Payment session expired";
+      await order.save();
+
+      return res.status(400).json({
+        message: "Payment session expired. Please try again.",
+        order
+      });
+    }
+
+    // ✅ Verify with Paystack
+    const verified = await verifyPayment(paymentReference);
+    console.log("🔹 Paystack verification response:", verified);
+
+    const expectedAmount = Math.round(order.totalPrice * 100);
+    const receivedAmount = verified.data.amount;
+
+    // ✅ Handle SUCCESS
+    if (verified?.status && verified.data.status === "success") {
+      if (receivedAmount !== expectedAmount) {
+        return res.status(400).json({
+          message: `Payment amount mismatch. Expected: GHS ${expectedAmount / 100} Received: GHS ${receivedAmount / 100}`,
+        });
+      }
+
+      order.payment.status = "paid";
+      order.payment.transactionId = verified.data.id;
+      order.payment.channel = verified.data.channel;
+      order.payment.gatewayResponse = verified.data.gateway_response;
+      order.payment.failureReason = null;
+      order.payment.paidAt = new Date(verified.data.paid_at || Date.now());
+
+      await order.save();
+      await sendPaymentSuccessNotifications(order);
+
+      return res.status(200).json({
+        message: "Payment verified successfully",
+        order,
+        payment: {
+          ...order.payment.toObject(),
+          authorizationType: order.payment.authorizationType,
+          gatewayResponse: verified.data.gateway_response,
+          authorization: verified.data.authorization || null
+        }
+      });
+    }
+
+    // ✅ Handle FAILURE
+    if (["failed", "abandoned"].includes(verified?.data?.status)) {
+      order.payment.status = "failed";
+      order.payment.failureReason = verified.data.gateway_response || "Payment failed";
+      order.payment.failedAt = new Date();
+
+      await order.save();
+      await sendPaymentFailedNotifications(order, verified.data);
+
+      return res.status(400).json({
+        message: "Payment verification failed",
+        failureReason: verified.data.gateway_response,
+        data: verified.data,
+      });
+    }
+
+    // ✅ Handle STILL PENDING
+    if (verified?.data?.status === "pending") {
+      // 🕒 Vodafone voucher timeout check
+      if (
+        order.payment.authorizationType === "voucher" &&
+        order.payment.expiresAt &&
+        new Date() > order.payment.expiresAt
+      ) {
+        order.payment.status = "expired";
+        order.payment.failureReason = "Voucher not submitted in time";
+        await order.save();
+
+        return res.status(400).json({
+          message: "Voucher expired. Please restart payment.",
+          order
+        });
+      }
+
+      return res.status(200).json({
+        message: "Payment still processing",
+        status: verified.data.status,
+        order,
+        authorizationType: order.payment.authorizationType
+      });
+    }
+
+    // ⚠️ Fallback for unhandled states
+    console.warn("⚠️ Unhandled Paystack status:", verified?.data?.status);
+    return res.status(202).json({
+      message: "Unhandled payment state",
+      status: verified?.data?.status,
+      data: verified?.data,
+      authorizationType: order.payment.authorizationType
+    });
+
+  } catch (err) {
+    console.error("❌ Error in verifyPaymentController:", err);
+    next(err);
+  }
 };
 
 

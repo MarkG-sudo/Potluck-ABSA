@@ -3,43 +3,171 @@ import { completePotchefProfileValidator } from "../validators/users.js";
 import axios from "axios";
 
 
+// export const completePotchefProfile = async (req, res, next) => {
+//     try {
+//         const user = await UserModel.findById(req.auth.id);
+
+//         if (!user) {
+//             return res.status(404).json({ error: "User not found" });
+//         }
+
+//         if (user.role !== "potchef") {
+//             return res.status(400).json({ error: "This endpoint is for potchef profile completion only" });
+//         }
+
+//         if (user.profileCompleted) {
+//             return res.status(400).json({
+//                 error: "Profile already completed. Use the update endpoint for changes."
+//             });
+//         }
+
+//         const { error, value } = completePotchefProfileValidator.validate(req.body);
+//         if (error) {
+//             return res.status(422).json({ error: error.details.map(d => d.message) });
+//         }
+
+//         const { phone, payoutDetails } = value;
+
+//         // ✅ Only update phone if provided (otherwise keep existing one)
+//         if (phone && phone.trim() !== '') {
+//             // Validate phone format if provided
+//             if (!/^0\d{9}$/.test(phone)) {
+//                 return res.status(422).json({
+//                     error: "Phone number must be a valid 10-digit Ghana number starting with 0"
+//                 });
+//             }
+//             user.phone = phone;
+//         }
+
+//         // ✅ Paystack integration
+//         let paystackSubaccount = null;
+//         try {
+//             const subRes = await axios.post(
+//                 "https://api.paystack.co/subaccount",
+//                 {
+//                     business_name: `${user.firstName} ${user.lastName}`.substring(0, 100),
+//                     settlement_bank: payoutDetails.bank.bankCode,
+//                     account_number: payoutDetails.bank.accountNumber,
+//                     percentage_charge: 15,
+//                     currency: "GHS"
+//                 },
+//                 {
+//                     headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+//                     timeout: 10000
+//                 }
+//             );
+//             paystackSubaccount = subRes.data.data.subaccount_code;
+//         } catch (paystackError) {
+//             console.error("❌ Paystack subaccount creation failed:", paystackError.response?.data);
+//             return res.status(400).json({
+//                 error: paystackError.response?.data?.message || "Bank account verification failed."
+
+//             });
+//         }
+
+//         user.payoutDetails = payoutDetails;
+//         user.paystack = {
+//             subaccountCode: paystackSubaccount,
+//             settlementBank: payoutDetails.bank.bankCode,
+//             accountNumber: payoutDetails.bank.accountNumber,
+//             percentageCharge: 15
+//         };
+
+//         // ✅ Explicitly set profileCompleted to true
+//         user.profileCompleted = true;
+
+//         // ✅ Timestamp the completion
+//         user.profileCompletedAt = new Date();
+
+//         await user.save();
+        
+
+//         res.json({
+//             message: "Profile completed successfully.Your account is now pending approval",
+//             profileCompleted: user.profileCompleted,
+//             status: user.status,
+//             user: {
+//                 id: user._id,
+//                 firstName: user.firstName,
+//                 lastName: user.lastName,
+//                 email: user.email,
+//                 role: user.role,
+//                 password: undefined
+//             }
+//         });
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
 export const completePotchefProfile = async (req, res, next) => {
     try {
         const user = await UserModel.findById(req.auth.id);
 
         if (!user) {
-            return res.status(404).json({ error: "User not found" });
+            return res.status(404).json({
+                status: "profile_completion_failed",
+                reason: "user_not_found",
+                error: "User not found"
+            });
         }
 
         if (user.role !== "potchef") {
-            return res.status(400).json({ error: "This endpoint is for potchef profile completion only" });
+            return res.status(400).json({
+                status: "profile_completion_failed",
+                reason: "invalid_role",
+                error: "This endpoint is for potchef profile completion only"
+            });
         }
 
         if (user.profileCompleted) {
             return res.status(400).json({
+                status: "profile_completion_failed",
+                reason: "already_completed",
                 error: "Profile already completed. Use the update endpoint for changes."
+            });
+        }
+
+        // ✅ Enforce 15-minute completion window
+        const now = new Date();
+        const registeredAt = new Date(user.createdAt);
+        const diffMinutes = (now - registeredAt) / (1000 * 60);
+        if (diffMinutes > 15) {
+            return res.status(403).json({
+                status: "profile_completion_failed",
+                reason: "expired_window",
+                error: "Profile completion window has expired. Please request a new link."
             });
         }
 
         const { error, value } = completePotchefProfileValidator.validate(req.body);
         if (error) {
-            return res.status(422).json({ error: error.details.map(d => d.message) });
+            user.profileCompletionAttempts = (user.profileCompletionAttempts || 0) + 1;
+            user.lastProfileAttemptAt = new Date();
+            await user.save();
+
+            return res.status(422).json({
+                status: "profile_completion_failed",
+                reason: "validation_error",
+                error: error.details.map(d => d.message)
+            });
         }
+
 
         const { phone, payoutDetails } = value;
 
-        // ✅ Only update phone if provided (otherwise keep existing one)
         if (phone && phone.trim() !== '') {
-            // Validate phone format if provided
             if (!/^0\d{9}$/.test(phone)) {
                 return res.status(422).json({
+                    status: "profile_completion_failed",
+                    reason: "invalid_phone_format",
                     error: "Phone number must be a valid 10-digit Ghana number starting with 0"
                 });
             }
             user.phone = phone;
         }
 
-        // ✅ Paystack integration
         let paystackSubaccount = null;
         try {
             const subRes = await axios.post(
@@ -60,7 +188,9 @@ export const completePotchefProfile = async (req, res, next) => {
         } catch (paystackError) {
             console.error("❌ Paystack subaccount creation failed:", paystackError.response?.data);
             return res.status(400).json({
-                error: "Bank account verification failed. Please check your bank details."
+                status: "profile_completion_failed",
+                reason: "paystack_error",
+                error: paystackError.response?.data?.message || "Bank account verification failed."
             });
         }
 
@@ -72,13 +202,13 @@ export const completePotchefProfile = async (req, res, next) => {
             percentageCharge: 15
         };
 
-        // ✅ Explicitly set profileCompleted to true
         user.profileCompleted = true;
+        user.profileCompletedAt = new Date();
 
         await user.save();
 
         res.json({
-            message: "Profile completed successfully.Your account is now pending approval",
+            message: "Profile completed successfully. Your account is now pending approval",
             profileCompleted: user.profileCompleted,
             status: user.status,
             user: {
@@ -90,10 +220,30 @@ export const completePotchefProfile = async (req, res, next) => {
                 password: undefined
             }
         });
-    } catch (err) {
-        next(err);
+    } catch (paystackError) {
+        const paystackData = paystackError.response?.data;
+
+        const paystackMessage = paystackData?.message || "Paystack error occurred";
+        const paystackStatus = paystackData?.status || null;
+
+        let reason = "paystack_error";
+        if (paystackMessage.toLowerCase().includes("bank")) {
+            reason = "bank_verification_failed";
+        } else if (paystackMessage.toLowerCase().includes("subaccount")) {
+            reason = "subaccount_creation_failed";
+        }
+
+        console.error("❌ Paystack error:", paystackData);
+
+        return res.status(400).json({
+            status: "profile_completion_failed",
+            reason,
+            error: paystackMessage,
+            paystackStatus
+        });
     }
 };
+
 
 export const getProfileCompletionStatus = async (req, res, next) => {
     try {
@@ -136,6 +286,65 @@ export const getProfileCompletionStatus = async (req, res, next) => {
         next(err);
     }
 };
+
+
+export const sendProfileCompletionReminder = async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        // 1. Find the user
+        const user = await UserModel.findById(userId);
+        if (!user || user.role !== "potchef" || user.profileCompleted) {
+            return res.status(400).json({ error: "Invalid user for profile completion reminder" });
+        }
+
+        // 2. Rate-limit reminders (5-minute cooldown)
+        const now = Date.now();
+        const lastSent = new Date(user.lastReminderSentAt || 0).getTime();
+        if (now - lastSent < 5 * 60 * 1000) {
+            return res.status(429).json({ error: "Reminder already sent recently. Please wait." });
+        }
+
+        // 3. Generate a new temp token (24-hour expiry)
+        const tempToken = jwt.sign(
+            { id: user._id, temp: true, scope: 'profile_completion' },
+            process.env.JWT_PRIVATE_KEY,
+            { expiresIn: '24h' }
+        );
+
+        // 4. Generate the magic link
+        const completionLink = `${process.env.FRONTEND_URL}/complete-profile?token=${tempToken}`;
+
+        // 5. Load and personalize the email template
+        const reminderTemplatePath = path.join(__dirname, "../utils/profile-completion-reminder.html");
+        if (fs.existsSync(reminderTemplatePath)) {
+            let reminderHTML = fs.readFileSync(reminderTemplatePath, "utf-8");
+            reminderHTML = reminderHTML
+                .replace(/{{firstName}}/g, user.firstName || "")
+                .replace(/{{completionLink}}/g, completionLink)
+                .replace(/{{expiryNotice}}/g, "This link will expire in 24 hours.");
+
+            await sendEmail({
+                from: { name: process.env.SMTP_FROM_NAME, email: process.env.SMTP_FROM_EMAIL },
+                to: user.email,
+                subject: "Complete Your Potchef Profile 📝",
+                html: reminderHTML,
+            });
+        }
+
+        // 6. Track reminder metadata
+        user.lastReminderSentAt = new Date();
+        user.reminderCount = (user.reminderCount || 0) + 1;
+        await user.save();
+
+        res.json({ message: "Profile completion reminder sent successfully" });
+
+    } catch (err) {
+        console.error("Reminder error:", err);
+        res.status(500).json({ error: "Failed to send reminder" });
+    }
+};
+
 
 // import { UserModel } from "../models/users.js";
 // import { updatePayoutDetailsValidator } from "../validators/users.js";

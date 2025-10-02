@@ -32,6 +32,22 @@ export const approveUser = async (req, res, next) => {
             return res.status(400).json({ error: "User is already rejected" });
         }
 
+        // ✅ Prevent approval if payout or subaccount info is incomplete
+        if (
+            action === "approve" &&
+            user.role === "potchef" &&
+            (
+                !user.payoutDetails?.bank?.accountNumber ||
+                !user.payoutDetails?.bank?.bankCode ||
+                !user.paystack?.subaccountCode
+            )
+        ) {
+            return res.status(400).json({
+                error: "Cannot approve chef. Payout details or Paystack subaccount info is missing."
+            });
+        }
+
+
         // ✅ Prevent approval of incomplete potchefs
         if (action === "approve" && user.role === "potchef" && !user.profileCompleted) {
             return res.status(400).json({

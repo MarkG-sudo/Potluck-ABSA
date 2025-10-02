@@ -1,5 +1,5 @@
 import express from "express";
-import { registerUser, getAllUsers, signInUser, getMyProfile, getOneUser, updateAvatar, updateUser, deleteUser, registerAdminBySuperAdmin } from "../controllers/users.js";
+import { registerUser, getAllUsers, signInUser, getMyProfile, getOneUser, updateAvatar, updateUser, deleteUser, registerAdminBySuperAdmin, forgotPassword, resetPassword } from "../controllers/users.js";
 import { hasPermission, isAuthenticated } from '../middlewares/auth.js';
 // import { loginRateLimiter } from "../middlewares/rateLimiter.js";
 import { upload } from "../middlewares/cloudinary.js";
@@ -15,6 +15,10 @@ userRouter.post("/users/register",  upload.single("avatar"), registerUser);
 userRouter.post("/users/signIn",  signInUser);
 
 userRouter.patch("/users/me", isAuthenticated,  updateUser);
+
+// 🔁 Password Recovery
+userRouter.post("/users/forgot-password", forgotPassword);
+userRouter.post("/users/reset-password", resetPassword);
 
 // Superadmin-only admin creation route
 userRouter.post("/superadmin/create-admin", isAuthenticated, isSuperAdmin, registerAdminBySuperAdmin);

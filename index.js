@@ -17,6 +17,8 @@ import paystackRouter from "./routes/paystack.js";
 import commissionChangeRouter from "./routes/commissionChange.js";
 import reportRouter from "./controllers/report.js";
 import dotenv from "dotenv";
+import { startProfileReminderJob } from "./cron/profileReminder.js";
+
 
 
 // Load environment variables
@@ -36,6 +38,20 @@ const connectDB = async () => {
     }
 };
 connectDB();
+
+
+// Start cron job if enabled
+if (process.env.ENABLE_REMINDERS === "true") {
+    startProfileReminderJob();
+    console.log("⏱️ Profile reminder job started");
+
+}
+
+// if (process.env.NODE_ENV === "production" && process.env.ENABLE_REMINDERS === "true") {
+//     startProfileReminderJob();
+// }
+
+
 
 // Middleware setup
 app.use(express.json());
@@ -86,47 +102,3 @@ app.listen(PORT, () => {
 
 
 
-
-
-
-
-// // Initialize Express app
-// const app = express();
-
-
-// // Connect to MongoDB
-// const connectDB = async () => {
-//     try {
-//         await mongoose.connect(process.env.MONGO_URI);
-//         console.log("✅ Database connected successfully");
-//     } catch (error) {
-//         console.error("❌ Database connection error:", error);
-//         process.exit(1);
-//     }
-// };
-// connectDB();
-
-// // Middleware setup
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: true }));
-// app.use(cors());
-// app.set('trust proxy', 1); 
-
-
-
-
-// // Register routes
-// app.use(userRouter);
-// app.use(mealRouter);
-// app.use(reviewMealRouter);
-// app.use(orderRouter);
-// app.use(adminRouter);
-// app.use(gAuthRouter);
-
-
-
-// // Start server
-// const PORT = 5090;
-// app.listen(PORT, () => {
-//     console.log(`🚀 Server running on port ${PORT}`);
-// });

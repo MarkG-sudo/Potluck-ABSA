@@ -24,83 +24,95 @@ export const initiatePayment = async ({
 
     try {
         const scaledAmount = Math.round(amount * 100); // Convert GHS to pesewas
-
-        // 🧾 Log comprehensive payment info
-        console.log(`🔸 Initiating payment`);
-        console.log(`   Email: ${email}`);
-        console.log(`   Amount: GHS ${amount} → ${scaledAmount} pesewas`);
-        console.log(`   Method: ${method}`);
-        console.log(`   Subaccount: ${subaccount || "None"}`);
-        console.log(`   Bearer: ${bearer}`);
-        console.log(`   Metadata:`, metadata);
-
-        // ✅ Validate subaccount format if provided
-        if (subaccount && !subaccount.startsWith('ACCT_')) {
-            console.warn(`⚠️  Subaccount code format may be invalid: ${subaccount}`);
-        }
-
         const basePayload = {
             email,
             amount: scaledAmount,
             currency: "GHS",
-            metadata, // This will now include momo_provider for momo payments
-            subaccount,
-            bearer,
+            metadata,
+            ...(subaccount ? { subaccount, bearer } : {})
         };
 
         let res;
+
         if (method === "momo") {
             if (!momo?.phone || !momo?.provider) {
                 throw new Error("Mobile money payment requires phone and provider");
             }
 
-            console.log(`📱 Initializing Mobile Money transaction`);
-            console.log(`   Phone: ${momo.phone}`);
-            console.log(`   Provider: ${momo.provider}`);
-            console.log(`   Endpoint: /transaction/initialize`);
-
-            // ✅ FIXED: Use /transaction/initialize and add provider to metadata
-            res = await paystack.post("/transaction/initialize", {
+            console.log(`📱 Mobile Money via /charge`);
+            res = await paystack.post("/charge", {
                 ...basePayload,
-                channels: ["mobile_money"],
-                metadata: {
-                    ...metadata,
-                    momo_provider: momo.provider // Track provider in metadata
-                },
+                mobile_money: {
+                    phone: momo.phone,
+                    provider: momo.provider
+                }
             });
+
+            const { reference, status, display_text } = res.data.data || {};
+
+            console.log(`🔁 Charge Response: ${status}`);
+            console.log(`📄 Display Text: ${display_text}`);
+            console.log(`🔗 Reference: ${reference}`);
+
+            if (status === "pay_offline") {
+                // MTN, AirtelTigo — wait for webhook
+                console.log(`📲 Offline authorization required. Show this to customer: ${display_text}`);
+
+                // Schedule verification fallback after 180s
+                setTimeout(() => verifyPayment(reference), 180000);
+            }
+
+            else if (status === "send_otp") {
+                // Vodafone — collect voucher and submit OTP
+                console.log(`📟 Vodafone flow. Prompt customer to dial USSD: ${display_text}`);
+                // Store reference and prompt for voucher input
+                // Later: call submitOtp(reference, voucherCode)
+            }
+
+            else if (status === "pending") {
+                console.log(`⏳ Transaction pending. Will require manual verification`);
+                setTimeout(() => verifyPayment(reference), 180000);
+            }
+
         } else {
             const channels = method === "bank" ? ["bank"] : ["card", "bank"];
-            console.log(`💳 Initializing card/bank transaction`);
-            console.log(`   Channels: ${channels.join(', ')}`);
-            console.log(`   Endpoint: /transaction/initialize`);
-
+            console.log(`💳 Card/Bank via /transaction/initialize`);
             res = await paystack.post("/transaction/initialize", {
                 ...basePayload,
-                channels: channels,
+                channels
             });
-        }
-
-        console.log(`✅ Paystack response received`);
-        console.log(`   Status: ${res.data.status}`);
-        console.log(`   Message: ${res.data.message}`);
-        console.log(`   Reference: ${res.data.data?.reference}`);
-
-        if (res.data.data?.authorization_url) {
-            console.log(`   Authorization URL: Present (length: ${res.data.data.authorization_url.length})`);
-        } else {
-            console.log(`   Authorization URL: Missing - this may cause issues`);
         }
 
         return res.data;
     } catch (err) {
-        console.error(`   Error Message: ${err.message}`);
-        console.error(`   HTTP Status: ${err.response?.status}`);
-        console.error(`   Paystack Error: ${JSON.stringify(err.response?.data)}`);
-        console.error(`   Request Data:`, err.config?.data);
-
-        throw new Error(err.response?.data?.message || "Failed to initiate payment");
+        console.error(`❌ Error: ${err.message}`);
+        console.error(`📡 HTTP Status: ${err.response?.status}`);
+        console.error(`🧾 Paystack Error: ${JSON.stringify(err.response?.data)}`);
+        throw {
+            status: err.response?.status || 500,
+            message: err.response?.data?.message || err.message,
+            details: err.response?.data
+        };
     }
 };
+
+
+export const submitOtp = async (reference, voucherCode) => {
+    try {
+        const res = await paystack.post("/charge/submit_otp", {
+            reference,
+            otp: voucherCode
+        });
+
+        console.log(`✅ OTP submitted for ${reference}`);
+        console.log(`📄 Gateway Response: ${res.data.data?.gateway_response}`);
+        return res.data;
+    } catch (err) {
+        console.error(`❌ OTP submission failed: ${err.message}`);
+        throw new Error("OTP submission failed");
+    }
+};
+
 
 // ✅ Verify payment
 export const verifyPayment = async (reference) => {

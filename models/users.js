@@ -1,5 +1,5 @@
 
-import { Schema, SchemaType, model } from "mongoose";
+import { Schema, model } from "mongoose";
 import { toJSON } from "@reis/mongoose-to-json";
 
 const userSchema = new Schema({
@@ -94,9 +94,20 @@ const userSchema = new Schema({
         }
     },
 
+    profileCompletionAttempts: {
+        type: Number,
+        default: 0
+    },
+    lastProfileAttemptAt: {
+        type: Date
+    },
+
     favorites: [{ type: Schema.Types.ObjectId, ref: "Meal" }],
     lastLogin: { type: Date },
-    loginCount: { type: Number, default: 0 }
+    loginCount: { type: Number, default: 0 },
+    lastReminderSentAt: { type: Date },
+    reminderCount: { type: Number, default: 0 },
+
 
 }, { timestamps: true });
 

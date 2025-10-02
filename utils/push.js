@@ -2,7 +2,7 @@ import webPush from "web-push";
 import { SubscriptionModel } from "../models/subscription.js";
 
 webPush.setVapidDetails(
-    "mailto:potluck@app.com",
+    "mailto:hello@potluck.africa",
     process.env.VAPID_PUBLIC_KEY,
     process.env.VAPID_PRIVATE_KEY
 );
