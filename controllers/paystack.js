@@ -11,13 +11,13 @@ export const paystackWebhook = async (req, res, next) => {
         const rawBody = req.rawBody || JSON.stringify(req.body);
         const signature = req.headers["x-paystack-signature"];
 
-        // ✅ Validate webhook signature
+        // ✅ 1. Validate webhook signature first
         const secret = process.env.PAYSTACK_SECRET_KEY;
         const hash = crypto.createHmac("sha512", secret).update(rawBody).digest("hex");
         if (hash !== signature) {
             console.error("❌ Invalid webhook signature! Potential fraud.");
             await NotificationModel.create({
-                scope: 'admin', 
+                scope: 'admin',
                 title: "⚠ Security Alert",
                 body: "Potential fraudulent webhook signature detected in Paystack webhook.",
                 url: "/admin/security",
@@ -27,9 +27,14 @@ export const paystackWebhook = async (req, res, next) => {
             return res.sendStatus(400);
         }
 
+        // ✅ 2. Parse event BEFORE sending response
         const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
-        const reference = event.data?.reference;
 
+        // ✅ 3. IMMEDIATELY acknowledge receipt to Paystack :cite[1]
+        res.sendStatus(200);
+
+        // ✅ 4. Process event asynchronously after sending response
+        const reference = event.data?.reference;
         console.log(`🔔 Webhook received: ${event.event} for reference: ${reference}`);
 
         // 🔹 Handle successful payment
@@ -46,13 +51,13 @@ export const paystackWebhook = async (req, res, next) => {
                 if (ps.amount !== expectedAmount) {
                     console.error(`⚠ Payment amount mismatch for order ${order._id}`);
                     await handlePaymentMismatch(order, ps, reference);
-                    return res.sendStatus(400);
+                    return; // No res.sendStatus() here since we already responded
                 }
 
                 if (ps.customer.email !== order.buyer.email) {
                     console.error(`⚠ Email mismatch for order ${order._id}`);
                     await handleEmailMismatch(order, ps, reference);
-                    return res.sendStatus(400);
+                    return; // No res.sendStatus() here since we already responded
                 }
 
                 // ✅ Update order to PAID
@@ -69,7 +74,7 @@ export const paystackWebhook = async (req, res, next) => {
             const ps = event.data;
             const order = await MealOrder.findOne({ "payment.reference": reference })
                 .populate("buyer", "firstName lastName email")
-                .populate("chef", "email") 
+                .populate("chef", "email")
                 .populate("meal", "mealName price");
 
             if (order && order.payment.status === "pending") {
@@ -85,7 +90,7 @@ export const paystackWebhook = async (req, res, next) => {
         // 🔹 Handle transfer success
         else if (event.event === "transfer.success") {
             await NotificationModel.create({
-                scope: 'admin', 
+                scope: 'admin',
                 title: "✅ Transfer Successful",
                 body: `Transfer ${event.data.reference} to chef completed. Amount: GHS ${(event.data.amount / 100).toFixed(2)}`,
                 url: "/admin/transfers",
@@ -96,7 +101,7 @@ export const paystackWebhook = async (req, res, next) => {
         // 🔹 Handle transfer failure
         else if (event.event === "transfer.failed") {
             await NotificationModel.create({
-                scope: 'admin', // ✅ FIXED: Use scope instead of user: null
+                scope: 'admin',
                 title: "❌ Transfer Failed",
                 body: `Transfer ${event.data.reference} failed. Reason: ${event.data.reason || "Unknown"}`,
                 url: "/admin/transfers",
@@ -110,18 +115,17 @@ export const paystackWebhook = async (req, res, next) => {
             console.log(`ℹ️ Unhandled webhook event: ${event.event}`);
         }
 
-        res.sendStatus(200);
     } catch (err) {
         console.error("Webhook processing error:", err.message);
         await NotificationModel.create({
-            scope: 'system', // ✅ FIXED: Use scope instead of user: null
+            scope: 'system',
             title: "⚠ Webhook Processing Error",
             body: `Error processing Paystack webhook: ${err.message}`,
             url: "/admin/system",
             type: "system",
             priority: "high",
         });
-        res.sendStatus(500);
+        // Note: Cannot send status here since we already sent 200
     }
 };
 
@@ -130,11 +134,17 @@ export const paystackWebhook = async (req, res, next) => {
 // =======================
 
 const updateOrderToPaid = async (order, ps) => {
+    // ✅ Idempotency check: Stop if order is already paid
+    if (order.payment.status === "paid") {
+        console.log(`Order ${order._id} is already paid. Skipping update.`);
+        return;
+    }
+
     order.payment.status = "paid";
     order.payment.reference = ps.reference;
     order.payment.transactionId = ps.id;
     order.payment.channel = ps.channel;
-    order.payment.failureReason = null; // Clear any previous failure
+    order.payment.failureReason = null;
     order.paidAt = new Date(ps.paid_at || Date.now());
 
     const commission = order.totalPrice * 0.15;
@@ -145,6 +155,12 @@ const updateOrderToPaid = async (order, ps) => {
 };
 
 const updateOrderToFailed = async (order, ps) => {
+    // ✅ Idempotency check: Only update if the order is still pending
+    if (order.payment.status !== "pending") {
+        console.log(`Order ${order._id} status is already ${order.payment.status}. Skipping failure update.`);
+        return;
+    }
+
     order.payment.status = "failed";
     order.payment.failureReason = ps.gateway_response || "Payment failed";
     order.payment.failedAt = new Date();

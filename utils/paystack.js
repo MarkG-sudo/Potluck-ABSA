@@ -17,7 +17,7 @@ export const initiatePayment = async ({
     method,
     momo,
     subaccount,
-    bearer = "subaccount" // Default to subaccount bearing charges
+    bearer = "subaccount"
 }) => {
     if (!email) throw new Error("Customer email is required");
     if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
@@ -30,7 +30,7 @@ export const initiatePayment = async ({
         console.log(`   Email: ${email}`);
         console.log(`   Amount: GHS ${amount} → ${scaledAmount} pesewas`);
         console.log(`   Method: ${method}`);
-        console.log(`   Subaccount: ${subaccount || "None (platform will receive full amount)"}`);
+        console.log(`   Subaccount: ${subaccount || "None"}`);
         console.log(`   Bearer: ${bearer}`);
         console.log(`   Metadata:`, metadata);
 
@@ -43,7 +43,7 @@ export const initiatePayment = async ({
             email,
             amount: scaledAmount,
             currency: "GHS",
-            metadata,
+            metadata, // This will now include momo_provider for momo payments
             subaccount,
             bearer,
         };
@@ -54,16 +54,18 @@ export const initiatePayment = async ({
                 throw new Error("Mobile money payment requires phone and provider");
             }
 
-            console.log(`📱 Mobile Money Details`);
+            console.log(`📱 Initializing Mobile Money transaction`);
             console.log(`   Phone: ${momo.phone}`);
             console.log(`   Provider: ${momo.provider}`);
-            console.log(`   Endpoint: /charge`);
+            console.log(`   Endpoint: /transaction/initialize`);
 
-            res = await paystack.post("/charge", {
+            // ✅ FIXED: Use /transaction/initialize and add provider to metadata
+            res = await paystack.post("/transaction/initialize", {
                 ...basePayload,
-                mobile_money: {
-                    phone: momo.phone,
-                    provider: momo.provider,
+                channels: ["mobile_money"],
+                metadata: {
+                    ...metadata,
+                    momo_provider: momo.provider // Track provider in metadata
                 },
             });
         } else {
@@ -85,6 +87,8 @@ export const initiatePayment = async ({
 
         if (res.data.data?.authorization_url) {
             console.log(`   Authorization URL: Present (length: ${res.data.data.authorization_url.length})`);
+        } else {
+            console.log(`   Authorization URL: Missing - this may cause issues`);
         }
 
         return res.data;
