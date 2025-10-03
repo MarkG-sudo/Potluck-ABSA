@@ -35,7 +35,7 @@ export const createOrderValidator = Joi.object({
         then: Joi.object({
             phone: Joi.string().pattern(/^[0-9]{10}$/).required()
                 .messages({ "string.pattern.base": "Phone must be 10 digits" }),
-            provider: Joi.string().valid("mtn", "vodafone", "airteltigo").required()
+            provider: Joi.string().valid("mtn", "vod", "atl").required()
         }),
         otherwise: Joi.forbidden()
     })

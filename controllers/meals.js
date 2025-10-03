@@ -123,7 +123,7 @@ export const getMealById = async (req, res, next) => {
         }
 
         const meal = await MealModel.findById(id)
-            .populate("createdBy", "firstName lastName avatar")
+            .populate("createdBy", "firstName lastName avatar phone")
             .populate({
                 path: 'reviews', // Populate the virtual field
                 select: 'reviewer rating comment createdAt',
