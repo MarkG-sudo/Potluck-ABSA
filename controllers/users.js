@@ -3,6 +3,7 @@ import { registerUserValidator, loginUserValidator, updateUserValidator, registe
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendEmail } from "../utils/mail.js";
+import { refreshAccessToken } from "../utils/tokenUtils.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
