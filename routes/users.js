@@ -16,6 +16,8 @@ userRouter.post("/users/signIn",  signInUser);
 
 userRouter.patch("/users/me", isAuthenticated,  updateUser);
 
+userRouter.delete("/users/delete/:id", isAuthenticated,  deleteUser);
+
 // 🔁 Password Recovery
 userRouter.post("/users/forgot-password", forgotPassword);
 userRouter.post("/users/reset-password", resetPassword);

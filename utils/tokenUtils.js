@@ -30,7 +30,7 @@ export const refreshAccessToken = async (refreshToken) => {
                 type: 'access'
             },
             process.env.JWT_PRIVATE_KEY,
-            { expiresIn: '15m' }
+            { expiresIn: '45m' }
         );
 
         return {

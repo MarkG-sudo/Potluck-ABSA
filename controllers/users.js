@@ -1,4 +1,5 @@
-import { UserModel } from "../models/users.js";
+import { UserModel} from "../models/users.js";
+import { MealModel} from "../models/meals.js"
 import { registerUserValidator, loginUserValidator, updateUserValidator, registerAdminValidator, forgotPasswordValidator , resetPasswordValidator } from "../validators/users.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -185,7 +186,7 @@ export const signInUser = async (req, res, next) => {
                 tokenVersion: user.tokenVersion || 0 // For invalidation
             },
             process.env.JWT_REFRESH_SECRET,
-            { algorithm: "HS256", expiresIn: '7d' } // 7 days for refresh token
+            { algorithm: "HS256", expiresIn: '30d' } // 7 days for refresh token
         );
 
         // ✅ Update user login stats
@@ -357,14 +358,49 @@ export const updateAvatar = async (req, res) => {
     }
 };
 
+// export const deleteUser = async (req, res) => {
+//     try {
+//         await UserModel.findByIdAndDelete(req.params.id);
+//         res.status(200).json({ message: "User deleted" });
+//     } catch (err) {
+//         res.status(500).json({ message: err.message });
+//     }
+// };
+
 export const deleteUser = async (req, res) => {
     try {
-        await UserModel.findByIdAndDelete(req.params.id);
-        res.status(200).json({ message: "User deleted" });
+        const userId = req.params.id;
+
+        // ✅ Allow self-deletion or admin deletion
+        if (req.auth.id !== userId && req.auth.role !== "admin") {
+            return res.status(403).json({
+                message: "You are not authorized to delete this account.",
+            });
+        }
+
+        const user = await UserModel.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // ✅ If user is a Potchef, delete all their meals
+        if (user.role === "potchef") {
+            const deletedMeals = await MealModel.deleteMany({ createdBy: user._id });
+            console.log(`🧹 Deleted ${deletedMeals.deletedCount} meals by this chef`);
+        }
+
+        // ✅ Delete user account
+        await UserModel.findByIdAndDelete(user._id);
+
+        res.status(200).json({
+            message: "User and associated meals deleted successfully",
+        });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        console.error("Error deleting user:", err);
+        res.status(500).json({ message: "Failed to delete user", error: err.message });
     }
 };
+
 
 export const updateUser = async (req, res, next) => {
     try {
@@ -422,7 +458,7 @@ export const refreshToken = async (req, res, next) => {
             message: "Token refreshed successfully",
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
-            expiresIn: 15 * 60, // 15 minutes
+            expiresIn: 45 * 60, // 45 minutes
             user: tokens.user
         });
 
