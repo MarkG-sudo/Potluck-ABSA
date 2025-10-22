@@ -9,6 +9,183 @@ import { WebhookLogModel } from "../models/webhookLog.js";
 
 
 
+// export const paystackWebhook = async (req, res, next) => {
+//     try {
+//         const rawBody = req.rawBody || JSON.stringify(req.body);
+//         const signature = req.headers["x-paystack-signature"];
+
+//         // ✅ 1. Validate webhook signature
+//         const secret = process.env.PAYSTACK_SECRET_KEY;
+//         const hash = crypto.createHmac("sha512", secret).update(rawBody).digest("hex");
+//         if (hash !== signature) {
+//             console.error("❌ Invalid webhook signature! Potential fraud.");
+
+//             await WebhookLogModel.create({
+//                 event: "invalid_signature",
+//                 reference: null,
+//                 payload: req.body,
+//                 verified: false,
+//                 notes: "Signature mismatch detected"
+//             });
+
+//             await NotificationModel.create({
+//                 scope: 'admin',
+//                 title: "⚠ Security Alert",
+//                 body: "Potential fraudulent webhook signature detected in Paystack webhook.",
+//                 url: "/admin/security",
+//                 type: "security",
+//                 priority: "high",
+//             });
+//             return res.sendStatus(400);
+//         }
+
+//         // ✅ 2. Parse event BEFORE responding
+//         const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
+
+//         // ✅ 3. Acknowledge receipt immediately
+//         res.sendStatus(200);
+
+//         // ✅ 4. Log verified webhook event
+//         await WebhookLogModel.create({
+//             event: event.event,
+//             reference: event.data?.reference,
+//             payload: event,
+//             verified: true,
+//             notes: `Webhook received and verified for ${event.event}`
+//         });
+
+
+//         // ✅ 5. Process event asynchronously
+//         const reference = event.data?.reference;
+//         console.log(`🔔 Webhook received: ${event.event} for reference: ${reference}`);
+
+//         if (!reference) return;
+
+//         const ps = event.data;
+
+//         // 🔹 Handle successful charge
+//         if (event.event === "charge.success" && ps.status === "success") {
+//             const order = await MealOrder.findOne({ "payment.reference": reference })
+//                 .populate("buyer", "firstName lastName email")
+//                 .populate("chef", "firstName lastName email paystack")
+//                 .populate("meal", "mealName price");
+
+//             if (order && order.payment.status !== "paid") {
+//                 // ✅ Security checks
+//                 const expectedAmount = Math.round(order.totalPrice * 100);
+//                 if (ps.amount !== expectedAmount) {
+//                     console.error(`⚠ Payment amount mismatch for order ${order._id}`);
+//                     await handlePaymentMismatch(order, ps, reference);
+//                     return;
+//                 }
+
+//                 if (ps.customer.email !== order.buyer.email) {
+//                     console.error(`⚠ Email mismatch for order ${order._id}`);
+//                     await handleEmailMismatch(order, ps, reference);
+//                     return;
+//                 }
+
+//                 // 🕒 Vodafone voucher expiry check
+//                 if (
+//                     order.payment.authorizationType === "voucher" &&
+//                     order.payment.expiresAt &&
+//                     new Date() > order.payment.expiresAt
+//                 ) {
+//                     console.warn(`⚠ Voucher expired before webhook arrived for ${reference}`);
+//                     order.payment.status = "expired";
+//                     order.payment.failureReason = "Voucher not submitted in time";
+//                     await order.save();
+//                     return;
+//                 }
+
+//                 // ✅ Update order to PAID using your utility function
+//                 await updateOrderToPaid(order, ps);
+
+//                 // Only send notifications if the order was actually updated to paid
+//                 if (order.payment.status === "paid") {
+//                     // ✅  Check notification flag
+//                     if (order.notifiedPaid) {
+//                         console.log("🔁 Notification already sent for this order. Skipping.");
+//                         return;
+//                     }
+
+//                     // ✅ IMPROVEMENT #2: Wrap in try-catch
+//                     try {
+//                         await sendPaymentSuccessNotifications(order);
+//                         order.notifiedPaid = true;
+//                         await order.save();
+//                         console.log("✅ Notifications sent successfully");
+//                     } catch (err) {
+//                         console.error("❌ Notification error:", err.message);
+//                         // Don't throw - allow webhook to complete successfully
+//                     }
+//                 }
+//             }
+//         }
+
+//         // 🔹 Handle failed charge
+//         else if (
+//             event.event === "charge.failed" ||
+//             (event.event === "charge.success" && ps.status !== "success")
+//         ) {
+//             const order = await MealOrder.findOne({ "payment.reference": reference })
+//                 .populate("buyer", "firstName lastName email")
+//                 .populate("chef", "email")
+//                 .populate("meal", "mealName price");
+
+//             if (order) {
+//                 // ✅ USE YOUR UTILITY FUNCTION
+//                 await updateOrderToFailed(order, ps);
+
+//                 // Only send failure notifications if the order was actually updated
+//                 if (order.payment.status === "failed") {
+//                     await sendPaymentFailedNotifications(order, ps);
+//                 }
+//             }
+//         }
+
+//         // 🔹 Handle transfer success
+//         else if (event.event === "transfer.success") {
+//             await NotificationModel.create({
+//                 scope: 'admin',
+//                 title: "✅ Transfer Successful",
+//                 body: `Transfer ${ps.reference} to chef completed. Amount: GHS ${(ps.amount / 100).toFixed(2)}`,
+//                 url: "/admin/transfers",
+//                 type: "transfer",
+//             });
+//         }
+
+//         // 🔹 Handle transfer failure
+//         else if (event.event === "transfer.failed") {
+//             await NotificationModel.create({
+//                 scope: 'admin',
+//                 title: "❌ Transfer Failed",
+//                 body: `Transfer ${ps.reference} failed. Reason: ${ps.reason || "Unknown"}`,
+//                 url: "/admin/transfers",
+//                 type: "transfer",
+//                 priority: "high",
+//             });
+//         }
+
+//         // 🔹 Handle unknown events
+//         else {
+//             console.log(`ℹ️ Unhandled webhook event: ${event.event}`);
+//         }
+
+//     } catch (err) {
+//         console.error("Webhook processing error:", err.message);
+//         await NotificationModel.create({
+//             scope: 'system',
+//             title: "⚠ Webhook Processing Error",
+//             body: `Error processing Paystack webhook: ${err.message}`,
+//             url: "/admin/system",
+//             type: "system",
+//             priority: "high",
+//         });
+//     }
+// };
+
+
 export const paystackWebhook = async (req, res, next) => {
     try {
         const rawBody = req.rawBody || JSON.stringify(req.body);
@@ -42,10 +219,33 @@ export const paystackWebhook = async (req, res, next) => {
         // ✅ 2. Parse event BEFORE responding
         const event = typeof rawBody === "string" ? JSON.parse(rawBody) : req.body;
 
-        // ✅ 3. Acknowledge receipt immediately
+        // ✅ 3. ⚡⚡⚡ ACKNOWLEDGE RECEIPT IMMEDIATELY - BEFORE ANY ASYNC OPERATIONS! ⚡⚡⚡
         res.sendStatus(200);
 
-        // ✅ 4. Log verified webhook event
+        // ✅ 4. Process event asynchronously (AFTER sending 200)
+        processWebhookAsync(event);
+
+    } catch (err) {
+        console.error("Webhook processing error:", err.message);
+        // Only send error if we haven't sent 200 yet
+        if (!res.headersSent) {
+            await NotificationModel.create({
+                scope: 'system',
+                title: "⚠ Webhook Processing Error",
+                body: `Error processing Paystack webhook: ${err.message}`,
+                url: "/admin/system",
+                type: "system",
+                priority: "high",
+            });
+            res.sendStatus(500);
+        }
+    }
+};
+
+// ✅ SEPARATE ASYNC FUNCTION FOR PROCESSING
+async function processWebhookAsync(event) {
+    try {
+        // ✅ Log verified webhook event
         await WebhookLogModel.create({
             event: event.event,
             reference: event.data?.reference,
@@ -54,8 +254,6 @@ export const paystackWebhook = async (req, res, next) => {
             notes: `Webhook received and verified for ${event.event}`
         });
 
-
-        // ✅ 5. Process event asynchronously
         const reference = event.data?.reference;
         console.log(`🔔 Webhook received: ${event.event} for reference: ${reference}`);
 
@@ -103,13 +301,12 @@ export const paystackWebhook = async (req, res, next) => {
 
                 // Only send notifications if the order was actually updated to paid
                 if (order.payment.status === "paid") {
-                    // ✅  Check notification flag
+                    // ✅ Check notification flag
                     if (order.notifiedPaid) {
                         console.log("🔁 Notification already sent for this order. Skipping.");
                         return;
                     }
 
-                    // ✅ IMPROVEMENT #2: Wrap in try-catch
                     try {
                         await sendPaymentSuccessNotifications(order);
                         order.notifiedPaid = true;
@@ -117,7 +314,6 @@ export const paystackWebhook = async (req, res, next) => {
                         console.log("✅ Notifications sent successfully");
                     } catch (err) {
                         console.error("❌ Notification error:", err.message);
-                        // Don't throw - allow webhook to complete successfully
                     }
                 }
             }
@@ -172,18 +368,19 @@ export const paystackWebhook = async (req, res, next) => {
             console.log(`ℹ️ Unhandled webhook event: ${event.event}`);
         }
 
-    } catch (err) {
-        console.error("Webhook processing error:", err.message);
+    } catch (error) {
+        console.error("Async webhook processing error:", error.message);
+        // Log async errors separately since response is already sent
         await NotificationModel.create({
             scope: 'system',
-            title: "⚠ Webhook Processing Error",
-            body: `Error processing Paystack webhook: ${err.message}`,
+            title: "⚠ Async Webhook Processing Error",
+            body: `Async error processing Paystack webhook: ${error.message}`,
             url: "/admin/system",
             type: "system",
-            priority: "high",
+            priority: "medium",
         });
     }
-};
+}
 
 // =======================
 // HELPER FUNCTIONS
