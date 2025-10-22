@@ -176,7 +176,7 @@ export const signInUser = async (req, res, next) => {
                 type: 'access'
             },
             process.env.JWT_PRIVATE_KEY,
-            { algorithm: "HS256", expiresIn: '15m' } // 15 minutes for access token
+            { algorithm: "HS256", expiresIn: '45m' } // 15 minutes for access token
         );
 
         const refreshToken = jwt.sign(
