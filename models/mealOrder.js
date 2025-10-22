@@ -58,7 +58,8 @@ const mealOrderSchema = new Schema(
                 enum: ["card", "momo", "bank", "cash"],
                 required: true,
             },
-            status: {
+
+                    status: {
                 type: String,
                 enum: ["pending", "paid", "failed"],
                 default: "pending",
@@ -68,6 +69,8 @@ const mealOrderSchema = new Schema(
             channel: { type: String }, // card | bank | mobile_money
             metadata: { type: Schema.Types.Mixed }, // raw Paystack response if needed
         },
+
+        notifiedPaid: { type: Boolean, default: false },
 
         acceptedAt: { type: Date, default: null },
         readyAt: { type: Date, default: null },
